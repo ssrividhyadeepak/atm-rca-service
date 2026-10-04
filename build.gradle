@@ -1,0 +1,43 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.srividhya'
+version = '0.1.0'
+
+// Java 17 is the enterprise baseline: compile against the Java 17 API whichever JDK runs Gradle,
+// so nothing newer can slip in.
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    // MongoDB through Spring Data's MongoTemplate. The client is created only when
+    // rca.storage=mongo (see MongoStorageConfig), so local runs never try to connect.
+    implementation 'org.springframework.data:spring-data-mongodb'
+    implementation 'org.mongodb:mongodb-driver-sync'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Downloads and starts a real mongod for MongoRunStoreTest (skipped if that is not possible)
+    testImplementation 'de.flapdoodle.embed:de.flapdoodle.embed.mongo:4.20.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+    }
+}
+
+tasks.named('bootJar') {
+    archiveFileName = 'atm-rca-service.jar'
+}

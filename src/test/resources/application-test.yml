@@ -1,0 +1,4 @@
+# Tests start runs themselves; the schedule stays off
+rca:
+  monitor:
+    enabled: false

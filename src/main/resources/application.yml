@@ -1,0 +1,50 @@
+# ---------------------------------------------------------------------------
+# ATM RCA service
+#
+#   no profile      LOCAL: everything runs on this machine with in-memory storage and sample
+#                   data. No MongoDB, no Splunk, no credentials.
+#   profile 'prod'  ENTERPRISE: real connections, configured through environment variables
+#                   (see README and config/prod.env.example). The service refuses to start
+#                   if a required setting is missing or a connection cannot be made.
+# ---------------------------------------------------------------------------
+spring:
+  application:
+    name: atm-rca-service
+  main:
+    banner-mode: off
+
+server:
+  # Local only by default
+  address: ${RCA_BIND_ADDRESS:127.0.0.1}
+  port: ${RCA_PORT:8090}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+
+rca:
+  # memory = runs are kept in this process and lost on restart; mongo = MongoDB
+  storage: ${RCA_STORAGE:memory}
+  mongo:
+    # Connection string, e.g. mongodb+srv://user:password@cluster.example.com/?tls=true
+    # From the environment only - it contains credentials. Never put it in this file.
+    uri: ${MONGODB_URI:}
+    database: ${MONGODB_DATABASE:atm_rca}
+  monitor:
+    # The scheduled monitoring run
+    enabled: ${RCA_MONITOR_ENABLED:true}
+    cron: "${RCA_MONITOR_CRON:0 */15 * * * *}"   # every 15 minutes
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+rca:
+  storage: mongo
