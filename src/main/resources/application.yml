@@ -39,6 +39,39 @@ rca:
     # The scheduled monitoring run
     enabled: ${RCA_MONITOR_ENABLED:true}
     cron: "${RCA_MONITOR_CRON:0 */15 * * * *}"   # every 15 minutes
+    # Also run once when the service starts, so a wrong Splunk setting shows immediately
+    run-on-startup: true
+    # How far back each run looks
+    window: 24h
+    # Failures of these transactions are monitored: the values of the 'transaction' field
+    transactions: [cash-withdrawal, cash-deposit, balance-inquiry]
+  splunk:
+    # stub = synthetic events, no Splunk needed; live = your Splunk over its REST API.
+    # The prod profile always uses live.
+    mode: ${SPLUNK_MODE:stub}
+    # Management URL (port 8089 by default), not the web UI address. Must be https.
+    base-url: ${SPLUNK_URL:}
+    # Credentials from the environment only. A Splunk authentication token (Settings > Tokens)
+    # is preferred; with single sign-on it is the only option.
+    token: ${SPLUNK_TOKEN:}
+    username: ${SPLUNK_USERNAME:}
+    password: ${SPLUNK_PASSWORD:}
+    index: ${SPLUNK_INDEX:main}
+    timeout: 60s
+    # Most rows one search may return
+    max-rows: 1000
+    # The SPL behind each named search. $index$, $transactions$ (rendered as "a","b") and
+    # $limit$ are filled in by the service after validation. Each row must have the fields
+    # ts, service, transaction, correlationId, terminal, exception, message, stackTrace -
+    # add rename / rex / eval where your field names differ. To use a saved search instead:
+    #   | savedsearch "atm_failed_transactions"
+    searches:
+      failed_transactions: >-
+        search index=$index$ "*exception*" transaction IN ($transactions$)
+        | sort 0 _time
+        | head $limit$
+        | eval ts=_time
+        | table ts service transaction correlationId terminal exception message stackTrace
 
 ---
 spring:
@@ -48,3 +81,5 @@ spring:
 
 rca:
   storage: mongo
+  splunk:
+    mode: live

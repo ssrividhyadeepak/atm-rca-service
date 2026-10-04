@@ -2,3 +2,7 @@
 rca:
   monitor:
     enabled: false
+    run-on-startup: false
+  stub:
+    # Fixed clock so the synthetic day, and every count, is reproducible
+    anchor: 2026-10-02T00:00:00Z
