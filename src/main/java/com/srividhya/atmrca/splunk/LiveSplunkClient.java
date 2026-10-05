@@ -2,11 +2,9 @@ package com.srividhya.atmrca.splunk;
 
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +34,12 @@ import tools.jackson.databind.json.JsonMapper;
  * template from configuration (rca.splunk.searches); arguments are validated before they are
  * put into it. A template can also call a saved search: {@code | savedsearch "name" arg=$arg$}.
  * What can be searched is decided by the role of the Splunk account behind the credentials.
+ *
+ * Two ways to sign in: an authentication token, or a username and password. With a username
+ * and password the client logs in once (/services/auth/login) and uses the session key Splunk
+ * returns, so the password is not sent with every search. If Splunk rejects the credentials
+ * the client stops trying until the service is restarted: repeated failed logins from a
+ * scheduled job would lock the account.
  */
 @Component
 @ConditionalOnProperty(name = "rca.splunk.mode", havingValue = "live")
@@ -45,8 +49,16 @@ public class LiveSplunkClient implements SplunkClient {
     // Letters, digits and a few separators: nothing that can close a quote or start a new SPL command
     private static final Pattern SAFE_ARGUMENT = Pattern.compile("[A-Za-z0-9 _./:-]{1,128}");
 
+    private static final String REJECTED = "Splunk rejected the credentials. Not trying again until the service is "
+            + "restarted, so the account is not locked by repeated failures. Check ";
+
     private final RestClient rest;
     private final JsonMapper json = new JsonMapper();
+    private final String token;
+    private final String username;
+    private final String password;
+    private String sessionKey;
+    private volatile boolean credentialsRejected;
     private final URI baseUrl;
     private final String index;
     private final int maxRows;
@@ -64,8 +76,14 @@ public class LiveSplunkClient implements SplunkClient {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
         factory.setReadTimeout(splunk.timeout() == null ? Duration.ofSeconds(60) : splunk.timeout());
-        this.rest = RestClient.builder().baseUrl(baseUrl.toString()).requestFactory(factory)
-                .defaultHeader("Authorization", authorization(splunk)).build();
+        this.rest = RestClient.builder().baseUrl(baseUrl.toString()).requestFactory(factory).build();
+        this.token = hasText(splunk.token()) ? splunk.token().strip() : null;
+        this.username = splunk.username();
+        this.password = splunk.password();
+        if (token == null && !(hasText(username) && hasText(password))) {
+            throw new IllegalStateException("rca.splunk.mode is live but no Splunk credentials are set. "
+                    + "Set SPLUNK_USERNAME and SPLUNK_PASSWORD, or SPLUNK_TOKEN");
+        }
     }
 
     @Override
@@ -90,18 +108,14 @@ public class LiveSplunkClient implements SplunkClient {
         long start = System.nanoTime();
         String body;
         try {
-            body = rest.post().uri("/services/search/jobs").contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                    .body(form).retrieve().body(String.class);
+            body = post(form);
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();
-            throw new IllegalStateException(status == 401
-                    ? "Splunk rejected the credentials (401). Check SPLUNK_TOKEN, or SPLUNK_USERNAME and SPLUNK_PASSWORD"
-                    : status == 403
-                            ? "The Splunk account is not allowed to run this search (403). Check its role and index access"
-                            : "Splunk search " + name + " failed with status " + status);
+            throw new IllegalStateException(status == 403
+                    ? "The Splunk account is not allowed to run this search (403). Check its role and index access"
+                    : "Splunk search " + name + " failed with status " + status);
         } catch (ResourceAccessException e) {
-            throw new IllegalStateException("Could not reach Splunk at " + baseUrl + " ("
-                    + e.getMostSpecificCause().getClass().getSimpleName() + "). Check SPLUNK_URL and the network path");
+            throw unreachable(e);
         }
         List<Map<String, Object>> rows = new ArrayList<>();
         for (JsonNode result : json.readTree(body).path("results")) {
@@ -109,6 +123,81 @@ public class LiveSplunkClient implements SplunkClient {
         }
         log.debug("Splunk search {} returned {} rows in {}ms", name, rows.size(), (System.nanoTime() - start) / 1_000_000);
         return rows;
+    }
+
+    /** Runs the search; a session that has expired is renewed once. A rejected token is final. */
+    private String post(MultiValueMap<String, String> form) {
+        try {
+            return rest.post().uri("/services/search/jobs").header("Authorization", authorization())
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED).body(form).retrieve().body(String.class);
+        } catch (RestClientResponseException e) {
+            if (e.getStatusCode().value() != 401) {
+                throw e;
+            }
+            if (token != null) {
+                credentialsRejected = true;
+                throw new IllegalStateException(REJECTED + "SPLUNK_TOKEN");
+            }
+        }
+        // Username and password: the session key was refused, most likely expired. Log in again, once.
+        synchronized (this) {
+            sessionKey = null;
+        }
+        try {
+            return rest.post().uri("/services/search/jobs").header("Authorization", authorization())
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED).body(form).retrieve().body(String.class);
+        } catch (RestClientResponseException e) {
+            if (e.getStatusCode().value() == 401) {
+                throw new IllegalStateException("Splunk accepted the login but refused the search (401)");
+            }
+            throw e;
+        }
+    }
+
+    private synchronized String authorization() {
+        if (credentialsRejected) {
+            throw new IllegalStateException(REJECTED + (token != null ? "SPLUNK_TOKEN" : "SPLUNK_USERNAME and SPLUNK_PASSWORD"));
+        }
+        if (token != null) {
+            return "Bearer " + token;
+        }
+        if (sessionKey == null) {
+            sessionKey = login();
+        }
+        return "Splunk " + sessionKey;
+    }
+
+    /** Exchanges the username and password for a session key. */
+    private String login() {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("username", username.strip());
+        form.add("password", password);
+        form.add("output_mode", "json");
+        try {
+            String body = rest.post().uri("/services/auth/login").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form).retrieve().body(String.class);
+            String key = json.readTree(body).path("sessionKey").asString("");
+            if (key.isBlank()) {
+                throw new IllegalStateException("Splunk login returned no session key");
+            }
+            log.info("Logged in to Splunk as {}", username.strip());
+            return key;
+        } catch (RestClientResponseException e) {
+            if (e.getStatusCode().value() == 401) {
+                credentialsRejected = true;
+                throw new IllegalStateException(REJECTED + "SPLUNK_USERNAME and SPLUNK_PASSWORD. If you sign in to "
+                        + "Splunk through single sign-on, Splunk has no password for you and this login cannot work");
+            }
+            throw new IllegalStateException("Splunk login failed with status " + e.getStatusCode().value());
+        } catch (ResourceAccessException e) {
+            throw unreachable(e);
+        }
+    }
+
+    private IllegalStateException unreachable(ResourceAccessException e) {
+        return new IllegalStateException("Could not reach Splunk at " + baseUrl + " ("
+                + e.getMostSpecificCause().getClass().getSimpleName() + "). Check SPLUNK_URL (the management port, "
+                + "usually 8089, must be reachable from this machine) and the network path");
     }
 
     @Override
@@ -177,18 +266,6 @@ public class LiveSplunkClient implements SplunkClient {
             throw new IllegalStateException("SPLUNK_URL must use https: credentials are sent with every search");
         }
         return uri;
-    }
-
-    private static String authorization(Splunk splunk) {
-        if (hasText(splunk.token())) {
-            return "Bearer " + splunk.token().strip();
-        }
-        if (hasText(splunk.username()) && hasText(splunk.password())) {
-            return "Basic " + Base64.getEncoder()
-                    .encodeToString((splunk.username() + ":" + splunk.password()).getBytes(StandardCharsets.UTF_8));
-        }
-        throw new IllegalStateException("rca.splunk.mode is live but no Splunk credentials are set. "
-                + "Set SPLUNK_TOKEN (preferred), or SPLUNK_USERNAME and SPLUNK_PASSWORD");
     }
 
     private static boolean hasText(String s) {

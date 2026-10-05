@@ -132,13 +132,15 @@ class ProdModeTest {
 
     @Test
     void aRunThatCannotUseSplunkIsRecordedAsFailedAndTurnsHealthDown() throws Exception {
-        SPLUNK.status = 401;
+        // A Splunk outage. (Rejected credentials are covered in LiveSplunkClientTest: they are
+        // final until restart, which would break the other tests sharing this server.)
+        SPLUNK.status = 503;
 
         JsonNode run = json.readTree(post("/api/runs").body());
         job.run();
 
         assertThat(run.get("status").asString()).isEqualTo("FAILED");
-        assertThat(run.get("note").asString()).contains("rejected the credentials (401)").doesNotContain("splunk-token");
+        assertThat(run.get("note").asString()).contains("failed with status 503").doesNotContain("splunk-token");
         assertThat(store.latest(1).get(0).trigger()).isEqualTo("SCHEDULED");
         HttpResponse<String> health = get("/actuator/health");
         assertThat(health.statusCode()).isEqualTo(503);

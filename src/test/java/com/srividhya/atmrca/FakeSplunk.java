@@ -6,6 +6,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.sun.net.httpserver.HttpServer;
 
@@ -18,6 +19,13 @@ public class FakeSplunk {
     public volatile Map<String, String> form;
     public volatile int status = 200;
     public volatile String response = "{\"results\":[]}";
+    /** Logins: how many were attempted, what the last one sent, and how to answer them. */
+    public final AtomicInteger logins = new AtomicInteger();
+    public final AtomicInteger searches = new AtomicInteger();
+    public volatile Map<String, String> loginForm;
+    public volatile int loginStatus = 200;
+    /** Session keys handed out are session-1, session-2, ...; a search with any other key gets 401. */
+    public volatile boolean expireSessions;
 
     public FakeSplunk() {
         try {
@@ -26,16 +34,29 @@ public class FakeSplunk {
             throw new IllegalStateException(e);
         }
         server.createContext("/", exchange -> {
-            path = exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath();
-            authorization = exchange.getRequestHeaders().getFirst("Authorization");
             Map<String, String> sent = new HashMap<>();
             for (String pair : new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8).split("&")) {
                 String[] kv = pair.split("=", 2);
                 sent.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8), URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
             }
-            form = sent;
-            byte[] body = response.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(status, body.length);
+            int answerStatus = status;
+            String answer = response;
+            if (exchange.getRequestURI().getPath().equals("/services/auth/login")) {
+                loginForm = sent;
+                answerStatus = loginStatus;
+                answer = "{\"sessionKey\":\"session-" + logins.incrementAndGet() + "\"}";
+            } else {
+                path = exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath();
+                authorization = exchange.getRequestHeaders().getFirst("Authorization");
+                form = sent;
+                if (expireSessions && authorization != null && authorization.startsWith("Splunk ")
+                        && !authorization.equals("Splunk session-" + logins.get())) {
+                    answerStatus = 401;
+                }
+                searches.incrementAndGet();
+            }
+            byte[] body = answer.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(answerStatus, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
         });

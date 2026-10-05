@@ -53,13 +53,15 @@ Stop with Ctrl+C.
 ## Run in the enterprise environment
 
 1. Copy `config/prod.env.example` to `config/prod.env` and set `MONGODB_URI`, `SPLUNK_URL`
-   and `SPLUNK_TOKEN`.
+   and `SPLUNK_USERNAME`.
 2. Copy `config/application-prod.example.yml` to `config/application-prod.yml` and adapt the
    Splunk search to your field names, and the list of monitored transactions.
-3. Load the settings and start with the prod profile, from this folder:
+3. Load the settings, type your Splunk password (it is not echoed or saved), and start
+   with the prod profile, from this folder:
 
 ```bash
 set -a; source config/prod.env; set +a
+read -s SPLUNK_PASSWORD && export SPLUNK_PASSWORD
 java -jar build/libs/atm-rca-service.jar --spring.profiles.active=prod
 ```
 
@@ -68,9 +70,10 @@ followed by the first monitoring run with the number of failed transactions it r
 
 - If MongoDB cannot be reached within 10 seconds the service stops with a message naming
   the host it tried.
-- If Splunk cannot be reached or rejects the credentials, the service stays up, the run is
-  recorded as FAILED with the reason, and `/actuator/health` shows `monitoring` DOWN until
-  a run succeeds.
+- If Splunk cannot be reached, the service stays up, the run is recorded as FAILED with
+  the reason, and `/actuator/health` shows `monitoring` DOWN until a run succeeds.
+- If Splunk rejects the username, password or token, the service does not try again until
+  it is restarted, so the scheduled runs cannot lock your account.
 - To try only one real connection at a time, leave the profile off and set
   `RCA_STORAGE=mongo` or `SPLUNK_MODE=live` with its variables.
 
@@ -79,13 +82,29 @@ followed by the first monitoring run with the number of failed transactions it r
 | `MONGODB_URI` | yes | MongoDB connection string |
 | `MONGODB_DATABASE` | no (`atm_rca`) | Database name |
 | `SPLUNK_URL` | yes | Splunk management URL (port 8089), https |
-| `SPLUNK_TOKEN` | yes, or username and password | Splunk authentication token |
-| `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` | only without a token | Basic authentication |
+| `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` | yes, or a token | Your Splunk login. The service logs in once and uses the session Splunk returns |
+| `SPLUNK_TOKEN` | instead of username and password | Splunk authentication token, where allowed |
 | `SPLUNK_INDEX` | no (`main`) | Index to search |
 | `RCA_PORT` | no (`8090`) | HTTP port |
 | `RCA_BIND_ADDRESS` | no (`127.0.0.1`) | Address to listen on |
 | `RCA_MONITOR_ENABLED` | no (`true`) | Scheduled monitoring run on or off |
 | `RCA_MONITOR_CRON` | no (every 15 minutes) | Schedule, UTC |
+
+### Signing in to Splunk with your own login
+
+The service talks to Splunk's management port (usually 8089), not the web page you log in
+to. Two things decide whether your username and password work there:
+
+- **The port must be reachable from your machine.** Check with the command below; it asks
+  for your password itself. A JSON answer means it works; a timeout means the port is closed
+  to you and a Splunk administrator has to open it or give you another route.
+- **Splunk must know your password.** It does for Splunk and LDAP / Active Directory
+  logins. If you reach Splunk through a single sign-on page (SAML), Splunk never sees a
+  password, and the same command answers 401.
+
+```bash
+curl -s -u YOUR_USER_ID "https://splunk.example.com:8089/services/server/info?output_mode=json" | head -c 300
+```
 
 The API has no authentication yet (Day 9), which is why it listens on localhost only.
 `/api/failures` returns log content: card numbers, account numbers and emails are masked,

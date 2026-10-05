@@ -51,11 +51,14 @@ rca:
     mode: ${SPLUNK_MODE:stub}
     # Management URL (port 8089 by default), not the web UI address. Must be https.
     base-url: ${SPLUNK_URL:}
-    # Credentials from the environment only. A Splunk authentication token (Settings > Tokens)
-    # is preferred; with single sign-on it is the only option.
-    token: ${SPLUNK_TOKEN:}
+    # Credentials from the environment only - never in this file. Either your Splunk username
+    # and password (the service logs in once and uses the session Splunk returns), or an
+    # authentication token if your Splunk allows them. A token wins when both are set.
+    # If Splunk rejects them the service stops trying until it is restarted, so a scheduled
+    # run cannot lock the account.
     username: ${SPLUNK_USERNAME:}
     password: ${SPLUNK_PASSWORD:}
+    token: ${SPLUNK_TOKEN:}
     index: ${SPLUNK_INDEX:main}
     timeout: 60s
     # Most rows one search may return

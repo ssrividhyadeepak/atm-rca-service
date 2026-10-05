@@ -45,10 +45,63 @@ class LiveSplunkClientTest {
     }
 
     @Test
-    void usesBasicAuthWhenThereIsNoToken() {
-        client(null, "svc-rca", "s3cret").search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS);
+    void logsInOnceWithUsernameAndPasswordThenUsesTheSessionKey() {
+        LiveSplunkClient client = client(null, " jdoe ", "s3cret pw&=");
 
-        assertThat(splunk.authorization).isEqualTo("Basic c3ZjLXJjYTpzM2NyZXQ=");
+        client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS);
+        client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS);
+        client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS);
+
+        assertThat(splunk.logins).hasValue(1);
+        assertThat(splunk.loginForm).containsEntry("username", "jdoe").containsEntry("password", "s3cret pw&=");
+        assertThat(splunk.searches).hasValue(3);
+        // The searches carry the session key, never the password
+        assertThat(splunk.authorization).isEqualTo("Splunk session-1");
+        assertThat(splunk.form.toString()).doesNotContain("s3cret");
+    }
+
+    @Test
+    void logsInAgainOnceWhenTheSessionHasExpired() {
+        LiveSplunkClient client = client(null, "jdoe", "s3cret");
+        client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS);
+
+        // Splunk forgets session-1: the next search is refused until a new login
+        splunk.logins.incrementAndGet();
+        splunk.expireSessions = true;
+        client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS);
+
+        assertThat(splunk.logins).as("one real re-login").hasValue(3);
+        assertThat(splunk.authorization).isEqualTo("Splunk session-3");
+    }
+
+    @Test
+    void stopsTryingAfterAWrongPasswordSoTheAccountIsNotLocked() {
+        splunk.loginStatus = 401;
+        LiveSplunkClient client = client(null, "jdoe", "wrong-pw");
+
+        for (int i = 0; i < 5; i++) {
+            assertThatThrownBy(() -> client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("rejected the credentials")
+                    .hasMessageContaining("Not trying again until the service is restarted")
+                    .message().doesNotContain("wrong-pw");
+        }
+
+        assertThat(splunk.logins).as("only the first attempt reached Splunk").hasValue(1);
+        assertThat(splunk.searches).hasValue(0);
+    }
+
+    @Test
+    void stopsTryingAfterARejectedToken() {
+        splunk.status = 401;
+        LiveSplunkClient client = client("tok-123", null, null);
+
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS))
+                    .hasMessageContaining("rejected the credentials").hasMessageContaining("SPLUNK_TOKEN")
+                    .message().doesNotContain("tok-123");
+        }
+
+        assertThat(splunk.searches).hasValue(1);
     }
 
     @Test
@@ -83,10 +136,6 @@ class LiveSplunkClientTest {
 
     @Test
     void explainsFailuresWithoutEchoingCredentials() {
-        splunk.status = 401;
-        assertThatThrownBy(() -> client("tok-123", null, null).search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("rejected the credentials (401)")
-                .message().doesNotContain("tok-123");
         splunk.status = 403;
         assertThatThrownBy(() -> client("tok-123", null, null).search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS))
                 .hasMessageContaining("not allowed to run this search (403)");
@@ -95,6 +144,8 @@ class LiveSplunkClientTest {
         assertThatThrownBy(() -> client("tok-123", null, null).search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("Could not reach Splunk at http://127.0.0.1:")
                 .message().doesNotContain("tok-123");
+        assertThatThrownBy(() -> client(null, "jdoe", "s3cret").search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS))
+                .hasMessageContaining("Could not reach Splunk").message().doesNotContain("s3cret");
     }
 
     @Test
