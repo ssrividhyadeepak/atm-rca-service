@@ -58,19 +58,57 @@ class LocalModeTest {
     }
 
     @Test
-    void aManualRunIsRecordedAndListedNewestFirst() throws Exception {
-        JsonNode first = json.readTree(post("/api/runs").body());
-        Thread.sleep(5);
-        JsonNode second = json.readTree(post("/api/runs").body());
+    void aRunRetrievesTheFailedTransactionsOfTheLastDay() throws Exception {
+        JsonNode run = json.readTree(post("/api/runs").body());
 
-        assertThat(first.get("trigger").asString()).isEqualTo("MANUAL");
-        assertThat(first.get("status").asString()).isEqualTo("COMPLETED");
-        assertThat(first.get("startedAt").asString()).matches("\\d{4}-\\d{2}-\\d{2}T.*Z");
+        assertThat(run.get("trigger").asString()).isEqualTo("MANUAL");
+        assertThat(run.get("status").asString()).isEqualTo("COMPLETED");
+        assertThat(run.get("source").asString()).isEqualTo("synthetic events (no Splunk)");
+        assertThat(run.get("windowFrom").asString()).isEqualTo("2026-10-01T00:00:00Z");
+        assertThat(run.get("windowTo").asString()).isEqualTo("2026-10-02T00:00:00Z");
+        assertThat(run.get("failedTransactions").asInt()).isEqualTo(137);
+        assertThat(run.get("byTransaction").toString()).isEqualTo("[{\"transaction\":\"cash-withdrawal\",\"count\":75},"
+                + "{\"transaction\":\"cash-deposit\",\"count\":36},{\"transaction\":\"balance-inquiry\",\"count\":26}]");
 
-        JsonNode runs = json.readTree(get("/api/runs?limit=2").body());
-        assertThat(runs).hasSize(2);
-        assertThat(runs.get(0).get("id").asString()).isEqualTo(second.get("id").asString());
-        assertThat(runs.get(1).get("id").asString()).isEqualTo(first.get("id").asString());
+        JsonNode runs = json.readTree(get("/api/runs?limit=1").body());
+        assertThat(runs.get(0).get("id").asString()).isEqualTo(run.get("id").asString());
+
+        JsonNode monitoring = json.readTree(get("/actuator/health").body()).get("components").get("monitoring");
+        assertThat(monitoring.get("status").asString()).isEqualTo("UP");
+        assertThat(monitoring.get("details").get("failedTransactions").asInt()).isEqualTo(137);
+    }
+
+    @Test
+    void failuresEndpointReturnsMaskedTransactionsOfMonitoredTypesOnly() throws Exception {
+        JsonNode batch = json.readTree(get("/api/failures").body());
+
+        assertThat(batch.get("total").asInt()).isEqualTo(137);
+        assertThat(batch.get("truncated").asBoolean()).isFalse();
+        assertThat(batch.get("items")).hasSize(137);
+        // receipt-print fails most often in the synthetic day but is not monitored
+        assertThat(batch.toString()).doesNotContain("receipt-print");
+
+        JsonNode first = batch.get("items").get(0);
+        assertThat(first.get("timestamp").asString()).startsWith("2026-10-01T");
+        assertThat(first.get("correlationId").asString()).matches("MSG-[0-9a-f]{12}");
+        assertThat(first.get("terminal").asString()).startsWith("ATM-");
+        assertThat(first.get("stackTrace").asString()).contains("\tat com.example.bank.");
+        // oldest first
+        assertThat(first.get("timestamp").asString()).isLessThan(batch.get("items").get(136).get("timestamp").asString());
+
+        // The synthetic events carry a full card number and account numbers; none may come out
+        assertThat(batch.toString()).contains("pan=************1111").contains("account=****")
+                .doesNotContain("4111111111111111").doesNotContainPattern("account=\\d");
+    }
+
+    @Test
+    void aShorterWindowReturnsFewerFailures() throws Exception {
+        // The host authorization timeouts are clustered between 13:12 and 15:36; the last 6 hours miss them
+        JsonNode batch = json.readTree(get("/api/failures?hours=6").body());
+
+        assertThat(batch.get("from").asString()).isEqualTo("2026-10-01T18:00:00Z");
+        assertThat(batch.toString()).doesNotContain("HostAuthTimeoutException").contains("LedgerPostingException");
+        assertThat(batch.get("total").asInt()).isBetween(1, 60);
     }
 
     @Test

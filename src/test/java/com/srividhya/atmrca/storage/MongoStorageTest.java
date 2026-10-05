@@ -14,6 +14,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 
 import com.mongodb.client.MongoClient;
 import com.srividhya.atmrca.config.RcaProperties;
+import com.srividhya.atmrca.failure.FailureBatch.TransactionCount;
 import com.srividhya.atmrca.monitor.MonitoringRun;
 
 import de.flapdoodle.embed.mongo.distribution.Version;
@@ -98,12 +99,13 @@ class MongoStorageTest {
     }
 
     private static RcaProperties props(String mongoUri) {
-        return new RcaProperties("mongo", new RcaProperties.Mongo(mongoUri, "atm_rca_test"),
-                new RcaProperties.Monitor(false, "-"));
+        return new RcaProperties("mongo", new RcaProperties.Mongo(mongoUri, "atm_rca_test"), null, null, null);
     }
 
     private static MonitoringRun run(String id, String startedAt) {
         Instant t = Instant.parse(startedAt);
-        return new MonitoringRun(id, t, t.plusMillis(250), "MANUAL", "COMPLETED", "test");
+        return new MonitoringRun(id, t, t.plusMillis(250), "MANUAL", "COMPLETED", t.minusSeconds(86400), t,
+                "synthetic events", 3, List.of(new TransactionCount("cash-withdrawal", 2),
+                        new TransactionCount("POST /v1.0/deposits", 1)), null);
     }
 }

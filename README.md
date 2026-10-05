@@ -8,6 +8,7 @@ report and drafts an incident for approval. Built in ten runnable steps; see the
 | | Local (no profile) | Prod (`--spring.profiles.active=prod`) |
 |---|---|---|
 | Storage | In memory, lost on restart | MongoDB, from `MONGODB_URI` |
+| Failed transactions | A synthetic day of ATM failures | Your Splunk, from `SPLUNK_URL` |
 | Outside connections | None | Each one configured by environment variables |
 
 The service prints its mode and connections when it starts. With the prod profile it refuses
@@ -28,6 +29,14 @@ Then, in another terminal:
 curl -s http://localhost:8090/actuator/health
 ```
 
+Retrieve the failed transactions of the last 24 hours (or fewer: `?hours=6`):
+
+```bash
+curl -s http://localhost:8090/api/failures
+```
+
+Start a monitoring run now, and list the recorded runs:
+
 ```bash
 curl -s -X POST http://localhost:8090/api/runs
 ```
@@ -36,32 +45,51 @@ curl -s -X POST http://localhost:8090/api/runs
 curl -s http://localhost:8090/api/runs
 ```
 
+Locally the data is a synthetic day: 137 failures across cash-withdrawal (75), cash-deposit
+(36) and balance-inquiry (26). A run also happens at startup and every 15 minutes.
+
 Stop with Ctrl+C.
 
 ## Run in the enterprise environment
 
-1. Copy `config/prod.env.example` to `config/prod.env` and set `MONGODB_URI`.
-2. Load the settings and start with the prod profile:
+1. Copy `config/prod.env.example` to `config/prod.env` and set `MONGODB_URI`, `SPLUNK_URL`
+   and `SPLUNK_TOKEN`.
+2. Copy `config/application-prod.example.yml` to `config/application-prod.yml` and adapt the
+   Splunk search to your field names, and the list of monitored transactions.
+3. Load the settings and start with the prod profile, from this folder:
 
 ```bash
 set -a; source config/prod.env; set +a
 java -jar build/libs/atm-rca-service.jar --spring.profiles.active=prod
 ```
 
-The startup lines show `Storage:  MongoDB database atm_rca`, and `/actuator/health` shows
-the same under `storage`. If MongoDB cannot be reached within 10 seconds the service stops
-with a message naming the host it tried.
+The startup lines show `Storage:  MongoDB database atm_rca` and `Splunk:   Splunk https://...`,
+followed by the first monitoring run with the number of failed transactions it retrieved.
+
+- If MongoDB cannot be reached within 10 seconds the service stops with a message naming
+  the host it tried.
+- If Splunk cannot be reached or rejects the credentials, the service stays up, the run is
+  recorded as FAILED with the reason, and `/actuator/health` shows `monitoring` DOWN until
+  a run succeeds.
+- To try only one real connection at a time, leave the profile off and set
+  `RCA_STORAGE=mongo` or `SPLUNK_MODE=live` with its variables.
 
 | Variable | Required in prod | Meaning |
 |---|---|---|
 | `MONGODB_URI` | yes | MongoDB connection string |
 | `MONGODB_DATABASE` | no (`atm_rca`) | Database name |
+| `SPLUNK_URL` | yes | Splunk management URL (port 8089), https |
+| `SPLUNK_TOKEN` | yes, or username and password | Splunk authentication token |
+| `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` | only without a token | Basic authentication |
+| `SPLUNK_INDEX` | no (`main`) | Index to search |
 | `RCA_PORT` | no (`8090`) | HTTP port |
 | `RCA_BIND_ADDRESS` | no (`127.0.0.1`) | Address to listen on |
 | `RCA_MONITOR_ENABLED` | no (`true`) | Scheduled monitoring run on or off |
 | `RCA_MONITOR_CRON` | no (every 15 minutes) | Schedule, UTC |
 
 The API has no authentication yet (Day 9), which is why it listens on localhost only.
+`/api/failures` returns log content: card numbers, account numbers and emails are masked,
+by three patterns that were not written against your log formats.
 
 ## Tests
 
@@ -77,7 +105,7 @@ that is not possible.
 | Day | Step | Status |
 |---|---|---|
 | 1 | Foundation: config, storage (in-memory / MongoDB), scheduler, health | done |
-| 2 | Splunk monitoring: retrieve failed transactions | |
+| 2 | Splunk monitoring: retrieve failed transactions | done |
 | 3 | RCA input contract: sanitized `daily-rca-input.json` | |
 | 4 | Failure correlation by exception, service, time, correlation ID | |
 | 5 | RCA engine without an LLM: `RcaAnalyzer` + rule-based implementation | |
