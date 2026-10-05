@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# ATM RCA service
+# Bank RCA service
 #
 #   no profile      LOCAL: everything runs on this machine with in-memory storage and sample
 #                   data. No MongoDB, no Splunk, no credentials.
@@ -9,7 +9,7 @@
 # ---------------------------------------------------------------------------
 spring:
   application:
-    name: atm-rca-service
+    name: bank-rca-service
   main:
     banner-mode: off
 
@@ -34,7 +34,7 @@ rca:
     # Connection string, e.g. mongodb+srv://user:password@cluster.example.com/?tls=true
     # From the environment only - it contains credentials. Never put it in this file.
     uri: ${MONGODB_URI:}
-    database: ${MONGODB_DATABASE:atm_rca}
+    database: ${MONGODB_DATABASE:bank_rca}
   monitor:
     # The scheduled monitoring run
     enabled: ${RCA_MONITOR_ENABLED:true}
@@ -56,6 +56,14 @@ rca:
         transaction: balance-inquiry
       - pattern: "ui-base-*"
         transaction: ui
+  parser:
+    # The label in front of the id on UI events, as in "BANK ID:Q1231". The id is also read
+    # from the "--Q1231-<trace id>-" prefix of other events, which needs no label.
+    id-label: ${RCA_ID_LABEL:BANK ID}
+  stub:
+    # Local runs only: the synthetic failures, as a JSON file you can edit. It is read again
+    # on every run, so a change shows up without a restart.
+    file: ${RCA_STUB_FILE:config/stub-failures.json}
   splunk:
     # stub = synthetic events, no Splunk needed; live = your Splunk over its REST API.
     # The prod profile always uses live.
@@ -78,7 +86,7 @@ rca:
     # "a","b") and $limit$ are filled in by the service after validation. The search returns
     # the raw events; the service takes them apart itself (component, pod, tracing metadata,
     # exception), so no field extraction is needed here. To use a saved search instead:
-    #   | savedsearch "atm_failure_events"
+    #   | savedsearch "bank_failure_events"
     searches:
       failed_transactions: >-
         search index=$index$ "*exception*" kubernetes.namespace_name="$namespace$"

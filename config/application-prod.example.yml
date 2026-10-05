@@ -3,6 +3,10 @@
 # profile. Secrets and URLs stay in environment variables (config/prod.env.example).
 
 rca:
+  # parser:
+  #   # The label in front of the id on your UI events, if it is not "BANK ID"
+  #   id-label: "BANK ID"
+
   monitor:
     # The Kubernetes namespace of your application (kubernetes.namespace_name in the events)
     namespace: your-namespace

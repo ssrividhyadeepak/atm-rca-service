@@ -1,0 +1,113 @@
+{
+  "namespace": "prod",
+  "cluster": "east1",
+  "datacenter": "dc1",
+  "bankIds": ["Q1231", "Q0457", "R2210", "Q3308", "T1187", "S0460"],
+  "failures": [
+    {
+      "note": "Clustered in a 2.4 hour window: a config change lowered the timeout",
+      "component": "withdrawal-p1",
+      "logger": "com.example.bank.withdrawal.host.HostAuthClient",
+      "level": "ERROR",
+      "exception": "com.example.bank.withdrawal.host.HostAuthTimeoutException",
+      "message": "host authorization timed out after 500ms (attempt 2/2)",
+      "stackTrace": [
+        "at com.example.bank.withdrawal.host.HostAuthClient.authorize(HostAuthClient.java:58)",
+        "at com.example.bank.withdrawal.WithdrawalService.withdraw(WithdrawalService.java:41)",
+        "at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)",
+        "Caused by: java.net.SocketTimeoutException: Read timed out",
+        "at com.example.bank.withdrawal.host.HostAuthClient.call(HostAuthClient.java:73)"
+      ],
+      "count": 64,
+      "fromHoursAgo": 10.8,
+      "toHoursAgo": 8.4
+    },
+    {
+      "component": "withdrawal-p1",
+      "logger": "com.example.bank.withdrawal.cash.CassettePlanner",
+      "level": "ERROR",
+      "exception": "com.example.bank.withdrawal.cash.InsufficientCassetteException",
+      "message": "cassette {int:1-4} cannot dispense amount={int:20-400}",
+      "stackTrace": [
+        "at com.example.bank.withdrawal.cash.CassettePlanner.plan(CassettePlanner.java:66)",
+        "at com.example.bank.withdrawal.WithdrawalService.withdraw(WithdrawalService.java:47)"
+      ],
+      "count": 11
+    },
+    {
+      "component": "deposit-p1",
+      "logger": "com.example.bank.deposit.validation.DepositValidator",
+      "level": "ERROR",
+      "exception": "java.lang.NullPointerException",
+      "message": "Cannot invoke \"com.example.bank.deposit.model.Envelope.getCurrency()\" because \"envelope\" is null",
+      "stackTrace": [
+        "at com.example.bank.deposit.validation.DepositValidator.validate(DepositValidator.java:35)",
+        "at com.example.bank.deposit.DepositService.deposit(DepositService.java:29)"
+      ],
+      "count": 22
+    },
+    {
+      "note": "Carries an account number, to show masking",
+      "component": "deposit-p1",
+      "logger": "com.example.bank.deposit.ledger.LedgerClient",
+      "level": "ERROR",
+      "exception": "com.example.bank.deposit.ledger.LedgerPostingException",
+      "message": "ledger posting failed status=503 attempt={int:1-3} account=98765{int:10000-99999}",
+      "stackTrace": [
+        "at com.example.bank.deposit.ledger.LedgerClient.postCredit(LedgerClient.java:49)",
+        "at com.example.bank.deposit.DepositService.deposit(DepositService.java:36)",
+        "Caused by: org.springframework.web.client.HttpServerErrorException$ServiceUnavailable: 503 Service Unavailable",
+        "at com.example.bank.deposit.ledger.LedgerClient.call(LedgerClient.java:63)"
+      ],
+      "count": 14,
+      "fromHoursAgo": 4.8,
+      "toHoursAgo": 2.4
+    },
+    {
+      "note": "Carries a (test) card number, to show masking",
+      "component": "balance-p1",
+      "logger": "com.example.bank.inquiry.CoreBankingClient",
+      "level": "ERROR",
+      "exception": "com.example.bank.inquiry.CoreBankingTimeoutException",
+      "message": "core banking balance call timed out after 2000ms pan=4111111111111111",
+      "stackTrace": [
+        "at com.example.bank.inquiry.CoreBankingClient.balance(CoreBankingClient.java:52)",
+        "at com.example.bank.inquiry.BalanceService.balance(BalanceService.java:31)",
+        "Caused by: java.net.SocketTimeoutException: Read timed out",
+        "at com.example.bank.inquiry.CoreBankingClient.call(CoreBankingClient.java:70)"
+      ],
+      "count": 17,
+      "fromHoursAgo": 16.8,
+      "toHoursAgo": 15.84
+    },
+    {
+      "note": "A fallback that logs at INFO: the word Exception, but no exception class and no stack trace",
+      "component": "balance-p1",
+      "logger": "com.example.bank.inquiry.component.InvokeBalanceWithCircuitBreaker",
+      "level": "INFO",
+      "message": "In downstreamBalanceFallback with Exception",
+      "count": 9
+    },
+    {
+      "note": "A UI event: no trace id; the bank id and tracking session are in the text",
+      "component": "ui-base-p1",
+      "logger": "com.example.bank.ui.api.controller.BankUiController",
+      "level": "INFO",
+      "uiEvent": true,
+      "message": "\"CustomerCommSetup: Exception - undefined\"",
+      "count": 12
+    },
+    {
+      "note": "Not a monitored component by default: shows that the search filters by component",
+      "component": "receipt-p1",
+      "logger": "com.example.bank.receipt.PrinterClient",
+      "level": "ERROR",
+      "exception": "com.example.bank.receipt.PrinterUnavailableException",
+      "message": "printer not ready state=PAPER_OUT retries={int:1-3}",
+      "stackTrace": [
+        "at com.example.bank.receipt.PrinterClient.print(PrinterClient.java:44)"
+      ],
+      "count": 118
+    }
+  ]
+}

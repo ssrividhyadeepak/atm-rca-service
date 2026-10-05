@@ -1,6 +1,6 @@
-# ATM RCA service
+# Bank RCA service
 
-Monitors failed ATM transactions, correlates them, produces a root cause analysis (RCA)
+Monitors failed bank transactions, correlates them, produces a root cause analysis (RCA)
 report and drafts an incident for approval. Built in ten runnable steps; see the plan below.
 
 ## Two ways to run
@@ -8,7 +8,7 @@ report and drafts an incident for approval. Built in ten runnable steps; see the
 | | Local (no profile) | Prod (`--spring.profiles.active=prod`) |
 |---|---|---|
 | Storage | In memory, lost on restart | MongoDB, from `MONGODB_URI` |
-| Failed transactions | A synthetic day of ATM failures | Your Splunk, from `SPLUNK_URL` |
+| Failed transactions | A synthetic day of bank failures | Your Splunk, from `SPLUNK_URL` |
 | Outside connections | None | Each one configured by environment variables |
 
 The service prints its mode and connections when it starts. With the prod profile it refuses
@@ -20,7 +20,7 @@ Needs JDK 17 or later and, the first time, network access for the Gradle depende
 
 ```bash
 ./gradlew bootJar
-java -jar build/libs/atm-rca-service.jar
+java -jar build/libs/bank-rca-service.jar
 ```
 
 Then, in another terminal:
@@ -30,7 +30,7 @@ curl -s http://localhost:8090/actuator/health
 ```
 
 Retrieve the failure events of the last 24 hours (or fewer: `?hours=6`). Each one carries
-its component, pod, tracing metadata (ATM id, trace id, session id), exception and stack trace:
+its component, pod, tracing metadata (bank id, trace id, session id), exception and stack trace:
 
 ```bash
 curl -s http://localhost:8090/api/failures
@@ -64,10 +64,10 @@ Stop with Ctrl+C.
 ```bash
 set -a; source config/prod.env; set +a
 read -s SPLUNK_PASSWORD && export SPLUNK_PASSWORD
-java -jar build/libs/atm-rca-service.jar --spring.profiles.active=prod
+java -jar build/libs/bank-rca-service.jar --spring.profiles.active=prod
 ```
 
-The startup lines show `Storage:  MongoDB database atm_rca` and `Splunk:   Splunk https://...`,
+The startup lines show `Storage:  MongoDB database bank_rca` and `Splunk:   Splunk https://...`,
 followed by the first monitoring run with the number of failed transactions it retrieved.
 
 - If MongoDB cannot be reached within 10 seconds the service stops with a message naming
@@ -82,7 +82,7 @@ followed by the first monitoring run with the number of failed transactions it r
 | Variable | Required in prod | Meaning |
 |---|---|---|
 | `MONGODB_URI` | yes | MongoDB connection string |
-| `MONGODB_DATABASE` | no (`atm_rca`) | Database name |
+| `MONGODB_DATABASE` | no (`bank_rca`) | Database name |
 | `SPLUNK_URL` | yes | Splunk management URL (port 8089), https |
 | `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` | yes, or a token | Your Splunk login. The service logs in once and uses the session Splunk returns |
 | `SPLUNK_TOKEN` | instead of username and password | Splunk authentication token, where allowed |
@@ -93,13 +93,36 @@ followed by the first monitoring run with the number of failed transactions it r
 | `RCA_MONITOR_ENABLED` | no (`true`) | Scheduled monitoring run on or off |
 | `RCA_MONITOR_CRON` | no (every 15 minutes) | Schedule, UTC |
 
+### Changing the sample data
+
+Local runs take their failures from `config/stub-failures.json`. Edit it and the next run
+uses the new contents; no restart is needed. Each entry is one kind of failure:
+
+| Field | Meaning |
+|---|---|
+| `component` | Container that logs it (required) |
+| `logger` | Class named in the log line (required) |
+| `message` | Log text (required). `{int:1-4}` becomes a random number in that range |
+| `count` | How many events to generate (required) |
+| `level` | `ERROR` when left out |
+| `exception` | Fully qualified exception class; leave out for a line with no exception |
+| `stackTrace` | The lines under the exception, as a list |
+| `fromHoursAgo`, `toHoursAgo` | When it happens, in hours before now; the whole day when left out |
+| `uiEvent` | `true` for the UI format: no trace id, bank id and session in the text |
+| `note` | A comment for whoever edits the file |
+
+`namespace`, `cluster`, `datacenter` and `bankIds` at the top apply to every event. A new
+component only shows up in results if it is also listed under `rca.monitor.components`.
+If the file has a mistake, the run is recorded as FAILED and says what to fix. To use a
+file somewhere else, set `RCA_STUB_FILE`.
+
 ### What is read from each event
 
 The search returns raw events; the service takes them apart itself. It expects the JSON
 the container platform writes, with the application's log line in `message`:
 
 ```
-<time> -- LEVEL: <level> <logger class> <number> -[<thread>] --<ATM id>-<trace id>- <text>
+<time> -- LEVEL: <level> <logger class> <number> -[<thread>] --<bank id>-<trace id>- <text>
 ```
 
 | Field | Taken from |
@@ -107,11 +130,14 @@ the container platform writes, with the application's log line in `message`:
 | component, pod, namespace | `kubernetes.container_name`, `pod_name`, `namespace_name` |
 | cluster, host | `openshift.labels.clustername`, `hostname` |
 | level, logger, thread | the log line prefix |
-| atmId, traceId | the `--<ATM id>-<trace id>-` part; on UI events, `ATM ID:` in the text |
+| bankId, traceId | the `--<bank id>-<trace id>-` part; on UI events, `BANK ID:` in the text |
 | sessionId | `CustomerTrackingSessionId:` in the text |
 | exception | the first fully qualified `...Exception` or `...Error` class in the text |
 | stackTrace | everything from the first `at ...(` frame |
 | transaction | the label configured for the component |
+
+The label in front of the id on UI events is a setting, `rca.parser.id-label` (or
+`RCA_ID_LABEL`), `BANK ID` by default. Set it to the label your own UI events use.
 
 An event in another format is kept with whatever could be read, and counted under
 `unparsed` in the response.

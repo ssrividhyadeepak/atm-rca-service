@@ -38,6 +38,12 @@ tasks.named('test') {
     }
 }
 
+// The editable stub data is also built into the jar, as the fallback when the file is not
+// next to where the jar is started
+tasks.named('processResources') {
+    from('config/stub-failures.json')
+}
+
 tasks.named('bootJar') {
-    archiveFileName = 'atm-rca-service.jar'
+    archiveFileName = 'bank-rca-service.jar'
 }
