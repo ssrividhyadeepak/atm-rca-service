@@ -44,18 +44,18 @@ rca:
     # How far back each run looks
     window: 24h
     # The Kubernetes namespace whose events are searched (kubernetes.namespace_name)
-    namespace: ${RCA_NAMESPACE:atm-prod}
+    namespace: ${RCA_NAMESPACE:prod}
     # The containers whose failures are monitored (kubernetes.container_name; '*' is a
     # wildcard), and the transaction label each one's failures are reported under
     components:
-      - pattern: "app-atm-withdrawal-*"
+      - pattern: "withdrawal-*"
         transaction: cash-withdrawal
-      - pattern: "app-atm-deposit-*"
+      - pattern: "deposit-*"
         transaction: cash-deposit
-      - pattern: "app-atm-balance-*"
+      - pattern: "balance-*"
         transaction: balance-inquiry
-      - pattern: "app-atm-ui-base-*"
-        transaction: atm-ui
+      - pattern: "ui-base-*"
+        transaction: ui
   splunk:
     # stub = synthetic events, no Splunk needed; live = your Splunk over its REST API.
     # The prod profile always uses live.

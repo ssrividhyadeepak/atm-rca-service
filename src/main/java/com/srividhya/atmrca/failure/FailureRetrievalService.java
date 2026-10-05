@@ -97,7 +97,7 @@ public class FailureRetrievalService {
         return counts.entrySet().stream().map(e -> make.apply(e.getKey(), e.getValue())).sorted(order).toList();
     }
 
-    /** "app-atm-withdrawal-*" style pattern: '*' matches any run of characters, everything else is literal. */
+    /** "withdrawal-*" style pattern: '*' matches any run of characters, everything else is literal. */
     static Pattern glob(String pattern) {
         StringBuilder regex = new StringBuilder();
         for (String part : pattern.split("\\*", -1)) {

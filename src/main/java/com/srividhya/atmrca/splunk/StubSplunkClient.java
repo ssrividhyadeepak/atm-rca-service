@@ -34,8 +34,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class StubSplunkClient implements SplunkClient {
 
     private static final long SEED = 42;
-    private static final String NAMESPACE = "atm-prod";
-    private static final String[] ATM_IDS = { "0009L", "0100K", "4276I", "0231M", "1187C", "0460T" };
+    private static final String NAMESPACE = "prod";
+    private static final String[] ATM_IDS = { "Q1231", "Q0457", "R2210", "Q3308", "T1187", "S0460" };
     private static final DateTimeFormatter LOCAL = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss,SSSxxx");
 
     /**
@@ -47,7 +47,7 @@ public class StubSplunkClient implements SplunkClient {
     }
 
     private static final List<Failure> FAILURES = List.of(
-            new Failure("app-atm-withdrawal-prod1", "com.example.bank.withdrawal.host.HostAuthClient", "ERROR",
+            new Failure("withdrawal-p1", "com.example.bank.withdrawal.host.HostAuthClient", "ERROR",
                     "com.example.bank.withdrawal.host.HostAuthTimeoutException",
                     r -> "host authorization timed out after 500ms (attempt 2/2)", """
                             \tat com.example.bank.withdrawal.host.HostAuthClient.authorize(HostAuthClient.java:58)
@@ -56,19 +56,19 @@ public class StubSplunkClient implements SplunkClient {
                             Caused by: java.net.SocketTimeoutException: Read timed out
                             \tat com.example.bank.withdrawal.host.HostAuthClient.call(HostAuthClient.java:73)""",
                     64, 0.55, 0.65),
-            new Failure("app-atm-withdrawal-prod1", "com.example.bank.withdrawal.cash.CassettePlanner", "ERROR",
+            new Failure("withdrawal-p1", "com.example.bank.withdrawal.cash.CassettePlanner", "ERROR",
                     "com.example.bank.withdrawal.cash.InsufficientCassetteException",
                     r -> "cassette " + (1 + r.nextInt(4)) + " cannot dispense amount=" + (20 * (1 + r.nextInt(20))), """
                             \tat com.example.bank.withdrawal.cash.CassettePlanner.plan(CassettePlanner.java:66)
                             \tat com.example.bank.withdrawal.WithdrawalService.withdraw(WithdrawalService.java:47)""",
                     11, 0, 1),
-            new Failure("app-atm-deposit-prod1", "com.example.bank.deposit.validation.DepositValidator", "ERROR",
+            new Failure("deposit-p1", "com.example.bank.deposit.validation.DepositValidator", "ERROR",
                     "java.lang.NullPointerException",
                     r -> "Cannot invoke \"com.example.bank.deposit.model.Envelope.getCurrency()\" because \"envelope\" is null", """
                             \tat com.example.bank.deposit.validation.DepositValidator.validate(DepositValidator.java:35)
                             \tat com.example.bank.deposit.DepositService.deposit(DepositService.java:29)""",
                     22, 0, 1),
-            new Failure("app-atm-deposit-prod1", "com.example.bank.deposit.ledger.LedgerClient", "ERROR",
+            new Failure("deposit-p1", "com.example.bank.deposit.ledger.LedgerClient", "ERROR",
                     "com.example.bank.deposit.ledger.LedgerPostingException",
                     r -> "ledger posting failed status=503 attempt=" + (1 + r.nextInt(3)) + " account=98765" + (10000 + r.nextInt(89999)), """
                             \tat com.example.bank.deposit.ledger.LedgerClient.postCredit(LedgerClient.java:49)
@@ -76,7 +76,7 @@ public class StubSplunkClient implements SplunkClient {
                             Caused by: org.springframework.web.client.HttpServerErrorException$ServiceUnavailable: 503 Service Unavailable
                             \tat com.example.bank.deposit.ledger.LedgerClient.call(LedgerClient.java:63)""",
                     14, 0.8, 0.9),
-            new Failure("app-atm-balance-prod1", "com.example.bank.inquiry.CoreBankingClient", "ERROR",
+            new Failure("balance-p1", "com.example.bank.inquiry.CoreBankingClient", "ERROR",
                     "com.example.bank.inquiry.CoreBankingTimeoutException",
                     r -> "core banking balance call timed out after 2000ms pan=4111111111111111", """
                             \tat com.example.bank.inquiry.CoreBankingClient.balance(CoreBankingClient.java:52)
@@ -85,13 +85,13 @@ public class StubSplunkClient implements SplunkClient {
                             \tat com.example.bank.inquiry.CoreBankingClient.call(CoreBankingClient.java:70)""",
                     17, 0.30, 0.34),
             // Logged at INFO by a fallback: the word "Exception" is there, a stack trace is not
-            new Failure("app-atm-balance-prod1", "com.example.bank.inquiry.component.InvokeBalanceWithCircuitBreaker",
+            new Failure("balance-p1", "com.example.bank.inquiry.component.InvokeBalanceWithCircuitBreaker",
                     "INFO", null, r -> "In downstreamBalanceFallback with Exception", null, 9, 0, 1),
             // A UI event: no trace id prefix, the ATM id and session are in the text
-            new Failure("app-atm-ui-base-prod1", "com.example.bank.atm.api.controller.AtmUiController", "INFO", null,
+            new Failure("ui-base-p1", "com.example.bank.atm.api.controller.AtmUiController", "INFO", null,
                     r -> "\"CustomerCommSetup: Exception - undefined\"", null, 12, 0, 1),
             // Not a monitored component by default: shows that the search filters by component
-            new Failure("app-atm-receipt-prod1", "com.example.bank.receipt.PrinterClient", "ERROR",
+            new Failure("receipt-p1", "com.example.bank.receipt.PrinterClient", "ERROR",
                     "com.example.bank.receipt.PrinterUnavailableException",
                     r -> "printer not ready state=PAPER_OUT retries=" + (1 + r.nextInt(3)), """
                             \tat com.example.bank.receipt.PrinterClient.print(PrinterClient.java:44)""",
@@ -158,7 +158,7 @@ public class StubSplunkClient implements SplunkClient {
         String atmId = ATM_IDS[rnd.nextInt(ATM_IDS.length)];
         String text = f.text().apply(rnd);
         String line;
-        if (f.component().contains("-ui-")) {
+        if (f.component().startsWith("ui-")) {
             line = "UI MOD ATM ID:" + atmId + " Timestamp: " + time + " CustomerTrackingSessionId:"
                     + hex(rnd, 16).toUpperCase() + " " + text;
         } else {

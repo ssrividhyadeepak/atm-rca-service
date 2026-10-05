@@ -48,7 +48,7 @@ curl -s http://localhost:8090/api/runs
 
 Locally the data is a synthetic day of 149 failure events in the shape the container
 platform writes them: cash-withdrawal (75), cash-deposit (36), balance-inquiry (26) and
-atm-ui (12). A run also happens at startup and every 15 minutes.
+ui (12). A run also happens at startup and every 15 minutes.
 
 Stop with Ctrl+C.
 
@@ -87,7 +87,7 @@ followed by the first monitoring run with the number of failed transactions it r
 | `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` | yes, or a token | Your Splunk login. The service logs in once and uses the session Splunk returns |
 | `SPLUNK_TOKEN` | instead of username and password | Splunk authentication token, where allowed |
 | `SPLUNK_INDEX` | no (`main`) | Index to search |
-| `RCA_NAMESPACE` | no (`atm-prod`) | Kubernetes namespace whose events are searched |
+| `RCA_NAMESPACE` | no (`prod`) | Kubernetes namespace whose events are searched |
 | `RCA_PORT` | no (`8090`) | HTTP port |
 | `RCA_BIND_ADDRESS` | no (`127.0.0.1`) | Address to listen on |
 | `RCA_MONITOR_ENABLED` | no (`true`) | Scheduled monitoring run on or off |

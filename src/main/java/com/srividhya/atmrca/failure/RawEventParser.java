@@ -22,11 +22,11 @@ import tools.jackson.databind.json.JsonMapper;
  * and the application log line inside "message" is
  *
  * <pre>
- * 2026-10-04T18:03:46,716-07:00 -- LEVEL: INFO com.example.Class 928202595 -[http-nio-8080-exec-6] --0009L-80cc944e-7925-7d33-3799-2694c2a6898a- text...
+ * 2026-10-04T18:03:46,716-07:00 -- LEVEL: INFO com.example.Class 928202595 -[http-nio-8080-exec-6] --Q1231-80cc944e-7925-7d33-3799-2694c2a6898a- text...
  * </pre>
  *
- * where {@code --0009L-80cc944e-...-} is the tracing metadata: ATM id, then trace id. UI events
- * carry it as {@code ATM ID:0100K} and {@code CustomerTrackingSessionId:...} in the text instead.
+ * where {@code --Q1231-80cc944e-...-} is the tracing metadata: ATM id, then trace id. UI events
+ * carry it as {@code ATM ID:Q0457} and {@code CustomerTrackingSessionId:...} in the text instead.
  * Nothing here throws on an unexpected event: whatever can be read is kept.
  */
 @Component

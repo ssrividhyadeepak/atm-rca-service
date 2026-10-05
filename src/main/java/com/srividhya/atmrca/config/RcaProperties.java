@@ -30,7 +30,7 @@ public record RcaProperties(String storage, Mongo mongo, Monitor monitor, Splunk
     }
 
     /**
-     * @param pattern container name, '*' matches any run of characters (e.g. app-atm-withdrawal-*)
+     * @param pattern container name, '*' matches any run of characters (e.g. withdrawal-*)
      * @param transaction the label its failures are reported under
      */
     public record MonitoredComponent(String pattern, String transaction) {
