@@ -29,7 +29,8 @@ Then, in another terminal:
 curl -s http://localhost:8090/actuator/health
 ```
 
-Retrieve the failed transactions of the last 24 hours (or fewer: `?hours=6`):
+Retrieve the failure events of the last 24 hours (or fewer: `?hours=6`). Each one carries
+its component, pod, tracing metadata (ATM id, trace id, session id), exception and stack trace:
 
 ```bash
 curl -s http://localhost:8090/api/failures
@@ -45,8 +46,9 @@ curl -s -X POST http://localhost:8090/api/runs
 curl -s http://localhost:8090/api/runs
 ```
 
-Locally the data is a synthetic day: 137 failures across cash-withdrawal (75), cash-deposit
-(36) and balance-inquiry (26). A run also happens at startup and every 15 minutes.
+Locally the data is a synthetic day of 149 failure events in the shape the container
+platform writes them: cash-withdrawal (75), cash-deposit (36), balance-inquiry (26) and
+atm-ui (12). A run also happens at startup and every 15 minutes.
 
 Stop with Ctrl+C.
 
@@ -54,8 +56,8 @@ Stop with Ctrl+C.
 
 1. Copy `config/prod.env.example` to `config/prod.env` and set `MONGODB_URI`, `SPLUNK_URL`
    and `SPLUNK_USERNAME`.
-2. Copy `config/application-prod.example.yml` to `config/application-prod.yml` and adapt the
-   Splunk search to your field names, and the list of monitored transactions.
+2. Copy `config/application-prod.example.yml` to `config/application-prod.yml` and set your
+   Kubernetes namespace and the containers to monitor, with a transaction label for each.
 3. Load the settings, type your Splunk password (it is not echoed or saved), and start
    with the prod profile, from this folder:
 
@@ -85,10 +87,34 @@ followed by the first monitoring run with the number of failed transactions it r
 | `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` | yes, or a token | Your Splunk login. The service logs in once and uses the session Splunk returns |
 | `SPLUNK_TOKEN` | instead of username and password | Splunk authentication token, where allowed |
 | `SPLUNK_INDEX` | no (`main`) | Index to search |
+| `RCA_NAMESPACE` | no (`atm-prod`) | Kubernetes namespace whose events are searched |
 | `RCA_PORT` | no (`8090`) | HTTP port |
 | `RCA_BIND_ADDRESS` | no (`127.0.0.1`) | Address to listen on |
 | `RCA_MONITOR_ENABLED` | no (`true`) | Scheduled monitoring run on or off |
 | `RCA_MONITOR_CRON` | no (every 15 minutes) | Schedule, UTC |
+
+### What is read from each event
+
+The search returns raw events; the service takes them apart itself. It expects the JSON
+the container platform writes, with the application's log line in `message`:
+
+```
+<time> -- LEVEL: <level> <logger class> <number> -[<thread>] --<ATM id>-<trace id>- <text>
+```
+
+| Field | Taken from |
+|---|---|
+| component, pod, namespace | `kubernetes.container_name`, `pod_name`, `namespace_name` |
+| cluster, host | `openshift.labels.clustername`, `hostname` |
+| level, logger, thread | the log line prefix |
+| atmId, traceId | the `--<ATM id>-<trace id>-` part; on UI events, `ATM ID:` in the text |
+| sessionId | `CustomerTrackingSessionId:` in the text |
+| exception | the first fully qualified `...Exception` or `...Error` class in the text |
+| stackTrace | everything from the first `at ...(` frame |
+| transaction | the label configured for the component |
+
+An event in another format is kept with whatever could be read, and counted under
+`unparsed` in the response.
 
 ### Signing in to Splunk with your own login
 

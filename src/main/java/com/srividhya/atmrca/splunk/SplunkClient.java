@@ -11,9 +11,9 @@ import java.util.Map;
 public interface SplunkClient {
 
     /**
-     * Failed transactions (events carrying an exception) for a list of transaction names.
-     * Args: transactions (list of names), limit.
-     * Row: ts, service, transaction, correlationId, terminal, exception, message, stackTrace.
+     * Raw failure events (events containing "exception") of the monitored components.
+     * Args: namespace, components (list of container-name patterns, '*' allowed), limit.
+     * Row: ts (Splunk's event time) and _raw (the event as indexed).
      */
     String FAILED_TRANSACTIONS = "failed_transactions";
 

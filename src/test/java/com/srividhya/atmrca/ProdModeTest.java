@@ -41,12 +41,22 @@ class ProdModeTest {
 
     private static TransitionWalker.ReachedState<RunningMongodProcess> mongod;
     private static final FakeSplunk SPLUNK = new FakeSplunk();
-    private static final String TWO_FAILURES = """
-            {"results":[
-             {"ts":"1790860412.337","service":"withdrawal-service","transaction":"cash-withdrawal","correlationId":"C-1",
-              "terminal":"ATM-9","exception":"com.bank.HostTimeoutException","message":"timed out for card 4111111111111111"},
-             {"ts":"1790860500","service":"deposit-service","transaction":"cash-deposit","correlationId":"C-2",
-              "exception":"java.lang.NullPointerException","message":"envelope is null","stackTrace":""}]}""";
+    /** Two raw events as Splunk returns them: the event JSON as a string in _raw. */
+    private static final String TWO_FAILURES = "{\"results\":[" + result("1790860412.337", "app-atm-withdrawal-prod1",
+            "2026-10-01T06:13:32,337-07:00 -- LEVEL: ERROR com.bank.host.HostClient 928202595 -[exec-6] "
+                    + "--0009L-80cc944e-7925-7d33-3799-2694c2a6898a- com.bank.host.HostTimeoutException: timed out for card "
+                    + "4111111111111111")
+            + "," + result("1790860500", "app-atm-deposit-prod1",
+                    "2026-10-01T06:15:00,000-07:00 -- LEVEL: INFO com.bank.deposit.Fallback 928202596 -[exec-7] "
+                            + "--0100K-0e965c5d-52db-bcd0-73f0-4f60bff9071a- In depositFallback with Exception")
+            + "]}";
+
+    private static String result(String ts, String container, String message) {
+        String event = "{\"@timestamp\":\"2026-10-01T13:13:32.337Z\",\"hostname\":\"node-1.example.net\",\"kubernetes\":"
+                + "{\"container_name\":\"" + container + "\",\"namespace_name\":\"atm-prod\",\"pod_name\":\"" + container
+                + "-deploy-abc-12345\"},\"level\":\"error\",\"message\":\"" + message + "\"}";
+        return "{\"ts\":\"" + ts + "\",\"_raw\":" + new JsonMapper().writeValueAsString(event) + "}";
+    }
 
     static boolean mongoAvailable() {
         if (mongod == null) {
@@ -100,8 +110,9 @@ class ProdModeTest {
         assertThat(run.get("source").asString()).isEqualTo("Splunk " + SPLUNK.url() + " index atm_app");
         assertThat(run.get("failedTransactions").asInt()).isEqualTo(2);
         assertThat(SPLUNK.authorization).isEqualTo("Bearer splunk-token-for-test");
-        assertThat(SPLUNK.form.get("search")).startsWith("search index=atm_app \"*exception*\" transaction IN "
-                + "(\"cash-withdrawal\",\"cash-deposit\",\"balance-inquiry\")");
+        assertThat(SPLUNK.form.get("search")).startsWith("search index=atm_app \"*exception*\" "
+                + "kubernetes.namespace_name=\"atm-prod\" kubernetes.container_name IN (\"app-atm-withdrawal-*\","
+                + "\"app-atm-deposit-*\",\"app-atm-balance-*\",\"app-atm-ui-base-*\")").endsWith("| table ts _raw");
 
         org.bson.Document stored = mongo.getCollection("monitoring_runs")
                 .find(new org.bson.Document("_id", run.get("id").asString())).first();
@@ -124,10 +135,17 @@ class ProdModeTest {
         assertThat(batch.get("total").asInt()).isEqualTo(2);
         JsonNode first = batch.get("items").get(0);
         assertThat(first.get("timestamp").asString()).isEqualTo("2026-10-01T13:13:32.337Z");
-        assertThat(first.get("message").asString()).isEqualTo("timed out for card ************1111");
-        // Fields Splunk did not return, or returned empty, are null
-        assertThat(batch.get("items").get(1).get("terminal").isNull()).isTrue();
-        assertThat(batch.get("items").get(1).get("stackTrace").isNull()).isTrue();
+        assertThat(first.get("transaction").asString()).isEqualTo("cash-withdrawal");
+        assertThat(first.get("component").asString()).isEqualTo("app-atm-withdrawal-prod1");
+        assertThat(first.get("pod").asString()).isEqualTo("app-atm-withdrawal-prod1-deploy-abc-12345");
+        assertThat(first.get("atmId").asString()).isEqualTo("0009L");
+        assertThat(first.get("traceId").asString()).isEqualTo("80cc944e-7925-7d33-3799-2694c2a6898a");
+        assertThat(first.get("exception").asString()).isEqualTo("com.bank.host.HostTimeoutException");
+        assertThat(first.get("message").asString()).endsWith("timed out for card ************1111");
+        // What the event did not carry is null
+        assertThat(batch.get("items").get(1).get("exception").isNull()).isTrue();
+        assertThat(batch.get("items").get(1).get("cluster").isNull()).isTrue();
+        assertThat(batch.toString()).doesNotContain("example.bank");
     }
 
     @Test

@@ -20,9 +20,10 @@ class LiveSplunkClientTest {
 
     private static final Instant FROM = Instant.parse("2026-10-01T00:00:00Z");
     private static final Instant TO = Instant.parse("2026-10-02T00:00:00Z");
-    private static final String SPL = "search index=$index$ \"*exception*\" transaction IN ($transactions$) | head $limit$";
-    private static final Map<String, Object> ARGS = Map.of("transactions", List.of("cash-withdrawal", "cash-deposit"),
-            "limit", 500);
+    private static final String SPL = "search index=$index$ \"*exception*\" kubernetes.namespace_name=\"$namespace$\" "
+            + "kubernetes.container_name IN ($components$) | head $limit$";
+    private static final Map<String, Object> ARGS = Map.of("namespace", "atm-prod", "components",
+            List.of("app-atm-withdrawal-*", "app-atm-deposit-prod1"), "limit", 500);
 
     private final FakeSplunk splunk = new FakeSplunk();
 
@@ -38,8 +39,8 @@ class LiveSplunkClientTest {
         assertThat(splunk.path).isEqualTo("POST /services/search/jobs");
         assertThat(splunk.authorization).isEqualTo("Bearer tok-123");
         assertThat(splunk.form)
-                .containsEntry("search", "search index=atm_app \"*exception*\" transaction IN "
-                        + "(\"cash-withdrawal\",\"cash-deposit\") | head 500")
+                .containsEntry("search", "search index=atm_app \"*exception*\" kubernetes.namespace_name=\"atm-prod\" "
+                        + "kubernetes.container_name IN (\"app-atm-withdrawal-*\",\"app-atm-deposit-prod1\") | head 500")
                 .containsEntry("earliest_time", "1790812800.000").containsEntry("latest_time", "1790899200.000")
                 .containsEntry("exec_mode", "oneshot").containsEntry("output_mode", "json").containsEntry("count", "1000");
     }
@@ -105,17 +106,17 @@ class LiveSplunkClientTest {
     }
 
     @Test
-    void turnsSplunkRowsIntoPlainValues() {
+    void returnsTheEventTimeAndTheRawEvent() {
         splunk.response = """
-                {"results":[{"ts":"1790860412.337","service":"withdrawal-service","transaction":"cash-withdrawal",
-                 "correlationId":"MSG-a1","exception":"com.example.HostAuthTimeoutException","message":"timed out",
-                 "stackTrace":["com.example.HostAuthTimeoutException: timed out","\\tat com.example.A.b(A.java:1)"]}]}""";
+                {"results":[{"ts":"1790860412.337","_raw":"{\\"@timestamp\\":\\"2026-10-01T13:13:32.337Z\\",\\"message\\":\\"boom\\"}"},
+                 {"ts":"1790860413","_raw":["line one","line two"]}]}""";
 
         List<Map<String, Object>> rows = client("t", null, null).search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO, ARGS);
 
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0)).containsEntry("ts", "2026-10-01T13:13:32.337Z").containsEntry("correlationId", "MSG-a1")
-                .containsEntry("stackTrace", "com.example.HostAuthTimeoutException: timed out\n\tat com.example.A.b(A.java:1)");
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0)).containsEntry("ts", "2026-10-01T13:13:32.337Z")
+                .containsEntry("_raw", "{\"@timestamp\":\"2026-10-01T13:13:32.337Z\",\"message\":\"boom\"}");
+        assertThat(rows.get(1)).containsEntry("_raw", "line one\nline two");
     }
 
     @Test
@@ -124,11 +125,14 @@ class LiveSplunkClientTest {
 
         for (String bad : List.of("x\" | delete", "a | outputlookup x", "[search index=*]", "a`b", "a) OR (b", "")) {
             assertThatThrownBy(() -> client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO,
-                    Map.of("transactions", List.of("cash-withdrawal", bad), "limit", 10)))
+                    Map.of("namespace", "atm-prod", "components", List.of("app-atm-withdrawal-*", bad), "limit", 10)))
                     .as(bad).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("not allowed");
         }
         assertThatThrownBy(() -> client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO,
-                Map.of("transactions", List.of(), "limit", 10))).hasMessageContaining("is empty");
+                Map.of("namespace", "atm-prod", "components", List.of(), "limit", 10))).hasMessageContaining("is empty");
+        assertThatThrownBy(() -> client.search(SplunkClient.FAILED_TRANSACTIONS, FROM, TO,
+                Map.of("namespace", "x\" OR index=\"*", "components", List.of("a"), "limit", 10)))
+                .hasMessageContaining("not allowed");
         assertThatThrownBy(() -> client.search("search index=* | delete", FROM, TO, Map.of()))
                 .hasMessageContaining("Unknown search");
         assertThat(splunk.path).as("nothing was sent to Splunk").isNull();

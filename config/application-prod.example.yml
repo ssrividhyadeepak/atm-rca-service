@@ -4,24 +4,26 @@
 
 rca:
   monitor:
-    # Failures of these transactions are monitored: the values your Splunk field takes
-    transactions: [cash-withdrawal, cash-deposit, balance-inquiry]
+    # The Kubernetes namespace of your application (kubernetes.namespace_name in the events)
+    namespace: your-namespace
+    # The containers to monitor (kubernetes.container_name; '*' is a wildcard) and the
+    # transaction label each one's failures are reported under
+    components:
+      - pattern: "app-yourapp-withdrawal-*"
+        transaction: cash-withdrawal
+      - pattern: "app-yourapp-deposit-*"
+        transaction: cash-deposit
+      - pattern: "app-yourapp-balance-*"
+        transaction: balance-inquiry
 
-  splunk:
-    searches:
-      # Must return, oldest first: ts, service, transaction, correlationId, terminal,
-      # exception, message, stackTrace (terminal and stackTrace may be missing).
-      # $index$, $transactions$ (rendered as "a","b") and $limit$ are filled in by the service.
-      # The field names on the left of each rename are examples - use your own.
-      failed_transactions: >-
-        search index=$index$ "*exception*" txn_name IN ($transactions$)
-        | sort 0 _time
-        | head $limit$
-        | rename txn_name as transaction, app as service, corrId as correlationId, atm_id as terminal
-        | rex field=_raw "(?<exception>[\w.$]+(?:Exception|Error))"
-        | rex field=_raw "^(?<message>[^\r\n]+)"
-        | eval ts=_time, stackTrace=_raw
-        | table ts service transaction correlationId terminal exception message stackTrace
-      # Or, if the search is kept in Splunk as a saved search:
-      # failed_transactions: >-
-      #   | savedsearch "atm_failed_transactions"
+  # Only needed if the default search does not fit, for example another exception filter.
+  # It must return ts and _raw; the service extracts the fields from the raw event.
+  # splunk:
+  #   searches:
+  #     failed_transactions: >-
+  #       search index=$index$ "*exception*" kubernetes.namespace_name="$namespace$"
+  #       kubernetes.container_name IN ($components$)
+  #       | sort 0 _time
+  #       | head $limit$
+  #       | eval ts=_time
+  #       | table ts _raw

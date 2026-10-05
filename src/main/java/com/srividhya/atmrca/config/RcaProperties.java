@@ -22,10 +22,18 @@ public record RcaProperties(String storage, Mongo mongo, Monitor monitor, Splunk
     /**
      * @param runOnStartup run once as soon as the service is up, so a wrong Splunk setting shows immediately
      * @param window how far back each run looks
-     * @param transactions the transaction names whose failures are monitored
+     * @param namespace the Kubernetes namespace whose events are searched
+     * @param components the containers whose failures are monitored
      */
-    public record Monitor(boolean enabled, String cron, boolean runOnStartup, Duration window,
-            List<String> transactions) {
+    public record Monitor(boolean enabled, String cron, boolean runOnStartup, Duration window, String namespace,
+            List<MonitoredComponent> components) {
+    }
+
+    /**
+     * @param pattern container name, '*' matches any run of characters (e.g. app-atm-withdrawal-*)
+     * @param transaction the label its failures are reported under
+     */
+    public record MonitoredComponent(String pattern, String transaction) {
     }
 
     /**

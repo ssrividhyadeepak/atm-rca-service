@@ -43,8 +43,19 @@ rca:
     run-on-startup: true
     # How far back each run looks
     window: 24h
-    # Failures of these transactions are monitored: the values of the 'transaction' field
-    transactions: [cash-withdrawal, cash-deposit, balance-inquiry]
+    # The Kubernetes namespace whose events are searched (kubernetes.namespace_name)
+    namespace: ${RCA_NAMESPACE:atm-prod}
+    # The containers whose failures are monitored (kubernetes.container_name; '*' is a
+    # wildcard), and the transaction label each one's failures are reported under
+    components:
+      - pattern: "app-atm-withdrawal-*"
+        transaction: cash-withdrawal
+      - pattern: "app-atm-deposit-*"
+        transaction: cash-deposit
+      - pattern: "app-atm-balance-*"
+        transaction: balance-inquiry
+      - pattern: "app-atm-ui-base-*"
+        transaction: atm-ui
   splunk:
     # stub = synthetic events, no Splunk needed; live = your Splunk over its REST API.
     # The prod profile always uses live.
@@ -63,18 +74,19 @@ rca:
     timeout: 60s
     # Most rows one search may return
     max-rows: 1000
-    # The SPL behind each named search. $index$, $transactions$ (rendered as "a","b") and
-    # $limit$ are filled in by the service after validation. Each row must have the fields
-    # ts, service, transaction, correlationId, terminal, exception, message, stackTrace -
-    # add rename / rex / eval where your field names differ. To use a saved search instead:
-    #   | savedsearch "atm_failed_transactions"
+    # The SPL behind each named search. $index$, $namespace$, $components$ (rendered as
+    # "a","b") and $limit$ are filled in by the service after validation. The search returns
+    # the raw events; the service takes them apart itself (component, pod, tracing metadata,
+    # exception), so no field extraction is needed here. To use a saved search instead:
+    #   | savedsearch "atm_failure_events"
     searches:
       failed_transactions: >-
-        search index=$index$ "*exception*" transaction IN ($transactions$)
+        search index=$index$ "*exception*" kubernetes.namespace_name="$namespace$"
+        kubernetes.container_name IN ($components$)
         | sort 0 _time
         | head $limit$
         | eval ts=_time
-        | table ts service transaction correlationId terminal exception message stackTrace
+        | table ts _raw
 
 ---
 spring:

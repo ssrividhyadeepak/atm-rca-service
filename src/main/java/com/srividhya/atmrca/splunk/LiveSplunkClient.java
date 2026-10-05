@@ -46,8 +46,9 @@ import tools.jackson.databind.json.JsonMapper;
 public class LiveSplunkClient implements SplunkClient {
 
     private static final Logger log = LoggerFactory.getLogger(LiveSplunkClient.class);
-    // Letters, digits and a few separators: nothing that can close a quote or start a new SPL command
-    private static final Pattern SAFE_ARGUMENT = Pattern.compile("[A-Za-z0-9 _./:-]{1,128}");
+    // Letters, digits, a few separators and the '*' wildcard: nothing that can close a quote or
+    // start a new SPL command
+    private static final Pattern SAFE_ARGUMENT = Pattern.compile("[A-Za-z0-9 _./:*-]{1,128}");
 
     private static final String REJECTED = "Splunk rejected the credentials. Not trying again until the service is "
             + "restarted, so the account is not locked by repeated failures. Check ";

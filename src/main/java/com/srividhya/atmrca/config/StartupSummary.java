@@ -40,8 +40,10 @@ public class StartupSummary implements ApplicationRunner {
                 env.getProperty("server.port"));
         log.info("Mode:     {}", prod ? "PROD - real connections" : "LOCAL - nothing outside this machine is used");
         log.info("Storage:  {}", store.description());
-        log.info("Splunk:   {}, monitoring {} over the last {}h", splunk.description(),
-                props.monitor().transactions(), props.monitor().window().toHours());
+        log.info("Splunk:   {}", splunk.description());
+        log.info("Monitor:  namespace {}, components {}, last {}h", props.monitor().namespace(),
+                props.monitor().components().stream().map(c -> c.pattern()).toList(),
+                props.monitor().window().toHours());
         log.info("Schedule: {}", props.monitor().enabled() ? "monitoring run on cron '" + props.monitor().cron()
                 + "' (UTC)" : "off");
         log.info("Health:   {}/actuator/health", base);

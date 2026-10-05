@@ -51,8 +51,8 @@ public class MonitoringService {
             run = new MonitoringRun(id, started, clock.instant(), trigger, "COMPLETED", from, started, batch.source(),
                     batch.total(), batch.byTransaction(),
                     batch.truncated() ? "Result cut off at the row cap; there may be more failures" : null);
-            log.info("Monitoring run {} ({}): {} failed transactions {} from {}", id, trigger, batch.total(),
-                    batch.byTransaction(), batch.source());
+            log.info("Monitoring run {} ({}): {} failure events from {}: {}", id, trigger, batch.total(),
+                    batch.source(), batch.byTransaction().stream().map(t -> t.transaction() + "=" + t.count()).toList());
         } catch (RuntimeException e) {
             run = new MonitoringRun(id, started, clock.instant(), trigger, "FAILED", from, started,
                     splunk.description(), 0, List.of(), e.getMessage());
