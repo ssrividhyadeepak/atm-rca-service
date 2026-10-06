@@ -1,5 +1,6 @@
 # Tests start runs themselves; the schedule stays off
 rca:
+  input-dir: build/test-data/rca-input
   monitor:
     enabled: false
     run-on-startup: false

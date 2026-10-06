@@ -8,3 +8,5 @@ out/
 # real settings for the prod profile
 /config/prod.env
 /config/application-prod.yml
+# generated at run time
+/data/

@@ -23,9 +23,15 @@ public record StubData(String namespace, String cluster, String datacenter, List
      * @param stackTrace the lines under the exception, without leading whitespace
      * @param fromHoursAgo toHoursAgo when it happens, in hours before now; the whole day (24 to 0) when left out
      * @param uiEvent true for the UI format: no trace id, the bank id and tracking session in the text
+     * @param alsoLoggedBy other components that log a line for the same request (same trace id)
+     *        shortly after each of these failures
      */
     public record StubFailure(String note, String component, String logger, String level, String exception,
             String message, List<String> stackTrace, Integer count, Double fromHoursAgo, Double toHoursAgo,
-            Boolean uiEvent) {
+            Boolean uiEvent, List<FollowOn> alsoLoggedBy) {
+    }
+
+    /** A line another component logs for the same request. level is ERROR when left out. */
+    public record FollowOn(String component, String logger, String level, String message) {
     }
 }

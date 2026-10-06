@@ -6,6 +6,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -19,6 +21,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import com.srividhya.bankrca.monitor.MonitoringJob;
+import com.srividhya.bankrca.source.TestRepo;
 import com.srividhya.bankrca.storage.MongoRunStore;
 import com.srividhya.bankrca.storage.RunStore;
 
@@ -45,7 +48,7 @@ class ProdModeTest {
     private static final String TWO_FAILURES = "{\"results\":[" + result("1790860412.337", "withdrawal-p1",
             "2026-10-01T06:13:32,337-07:00 -- LEVEL: ERROR com.bank.host.HostClient 928202595 -[exec-6] "
                     + "--Q1231-80cc944e-7925-7d33-3799-2694c2a6898a- com.bank.host.HostTimeoutException: timed out for card "
-                    + "4111111111111111")
+                    + "4111111111111111\\n\\tat com.bank.host.HostClient.call(HostClient.java:3)")
             + "," + result("1790860500", "deposit-p1",
                     "2026-10-01T06:15:00,000-07:00 -- LEVEL: INFO com.bank.deposit.Fallback 928202596 -[exec-7] "
                             + "--Q0457-0e965c5d-52db-bcd0-73f0-4f60bff9071a- In depositFallback with Exception")
@@ -56,6 +59,25 @@ class ProdModeTest {
                 + "{\"container_name\":\"" + container + "\",\"namespace_name\":\"prod\",\"pod_name\":\"" + container
                 + "-deploy-abc-12345\"},\"level\":\"error\",\"message\":\"" + message + "\"}";
         return "{\"ts\":\"" + ts + "\",\"_raw\":" + new JsonMapper().writeValueAsString(event) + "}";
+    }
+
+    private static Path remote;
+
+    private static synchronized Path gitRemote() {
+        if (remote == null) {
+            try {
+                Path dir = Files.createTempDirectory("prod-mode-test").resolve("remote");
+                try (TestRepo repo = new TestRepo(dir)) {
+                    repo.commit("host/src/main/java/com/bank/host/HostClient.java",
+                            "package com.bank.host;\nclass HostClient {\n    Object call() { return http.post(TIMEOUT_MS); }\n}\n",
+                            "release.bot", "2026-09-30T23:50:00Z", "host: lower timeout");
+                }
+                remote = dir;
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        return remote;
     }
 
     static boolean mongoAvailable() {
@@ -79,6 +101,12 @@ class ProdModeTest {
         registry.add("rca.splunk.token", () -> "splunk-token-for-test");
         registry.add("rca.splunk.index", () -> "bank_app");
         registry.add("rca.monitor.run-on-startup", () -> "false");
+        // The application code: a real git repository, standing in for the remote
+        registry.add("rca.source.remote-url", () -> gitRemote().toString());
+        registry.add("rca.source.repos-dir", () -> gitRemote().resolveSibling("mirrors").toString());
+        registry.add("rca.source.deployed-ref", () -> "main");
+        // Keep test output out of the project's data folder
+        registry.add("rca.input-dir", () -> "build/test-data/rca-input-prod");
         // Far in the future: the job must exist, but not fire during the test
         registry.add("rca.monitor.cron", () -> "0 0 0 1 1 *");
     }
@@ -112,7 +140,30 @@ class ProdModeTest {
         assertThat(SPLUNK.authorization).isEqualTo("Bearer splunk-token-for-test");
         assertThat(SPLUNK.form.get("search")).startsWith("search index=bank_app \"*exception*\" "
                 + "kubernetes.namespace_name=\"prod\" kubernetes.container_name IN (\"withdrawal-*\","
-                + "\"deposit-*\",\"balance-*\",\"ui-base-*\")").endsWith("| table ts _raw");
+                + "\"deposit-*\",\"balance-*\",\"ui-base-*\",\"gateway-*\")").endsWith("| table ts _raw");
+        assertThat(run.get("signatures").asInt()).isEqualTo(2);
+        // The run also wrote the day's RCA report and the signature history to MongoDB
+        org.bson.Document report = mongo.getCollection("rca_reports").find().first();
+        assertThat(report.getString("analyzer")).isEqualTo("rule-based/v1");
+        assertThat(report.getList("findings", org.bson.Document.class)).hasSize(2);
+        assertThat(mongo.getCollection("signature_history").countDocuments()).isEqualTo(2);
+        assertThat(mongo.getCollection("rca_inputs").countDocuments()).isEqualTo(1);
+
+        // The failure with a stack trace was looked up in the mirrored git repository, and the
+        // commit made 23 hours before the first failure is named
+        JsonNode finding = null;
+        for (JsonNode f : json.readTree(get("/api/rca/latest").body()).get("findings")) {
+            if (f.get("component").asString().equals("withdrawal-p1")) {
+                finding = f;
+            }
+        }
+        assertThat(finding.get("source").get("found").asBoolean()).isTrue();
+        assertThat(finding.get("source").get("repository").asString()).isEqualTo("default");
+        assertThat(finding.get("source").get("path").asString()).isEqualTo("host/src/main/java/com/bank/host/HostClient.java");
+        assertThat(finding.get("source").get("code").asString()).isEqualTo("Object call() { return http.post(TIMEOUT_MS); }");
+        assertThat(finding.get("source").get("lineLastChanged").get("author").asString()).isEqualTo("release.bot");
+        assertThat(finding.get("suspectCommit").asString()).matches("[0-9a-f]{10}");
+        assertThat(finding.toString()).doesNotContain("stub-source");
 
         org.bson.Document stored = mongo.getCollection("monitoring_runs")
                 .find(new org.bson.Document("_id", run.get("id").asString())).first();

@@ -3,8 +3,11 @@ package com.srividhya.bankrca.storage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -16,6 +19,11 @@ import com.mongodb.client.MongoClient;
 import com.srividhya.bankrca.config.RcaProperties;
 import com.srividhya.bankrca.failure.FailureBatch.TransactionCount;
 import com.srividhya.bankrca.monitor.MonitoringRun;
+import com.srividhya.bankrca.rca.RcaAnalyzer;
+import com.srividhya.bankrca.rca.RcaInput;
+import com.srividhya.bankrca.rca.RcaReport;
+import com.srividhya.bankrca.rca.RcaTestData;
+import com.srividhya.bankrca.rca.RuleBasedRcaAnalyzer;
 
 import de.flapdoodle.embed.mongo.distribution.Version;
 import de.flapdoodle.embed.mongo.transitions.Mongod;
@@ -76,6 +84,50 @@ class MongoStorageTest {
     }
 
     @Test
+    void keepsReportsAndSignatureHistory() {
+        Assumptions.assumeTrue(uri != null, "mongod could not be started on this machine");
+        MongoStorageConfig config = new MongoStorageConfig();
+        RcaProperties props = props(uri);
+        try (MongoClient client = config.mongoClient(props)) {
+            MongoTemplate template = config.mongoTemplate(client, props);
+            template.dropCollection(MongoRcaStore.REPORTS);
+            template.dropCollection(MongoRcaStore.HISTORY);
+            MongoRcaStore store = new MongoRcaStore(template);
+            RcaAnalyzer analyzer = new RuleBasedRcaAnalyzer(Clock.fixed(Instant.parse("2026-10-02T00:05:00Z"), ZoneOffset.UTC));
+            RcaReport report = analyzer.analyze(RcaInput.of(RcaTestData.day(RcaTestData.signature("sig-1", "pay-p1",
+                    "com.acme.HostTimeoutException", "timed out", "com.acme.HostTimeoutException: timed out\n\tat "
+                            + "com.acme.HostClient.call(HostClient.java:73)", 64, "BURST", 2, 6, 40)), Map.of()));
+
+            RcaInput input = RcaInput.of(RcaTestData.day(RcaTestData.signature("sig-1", "pay-p1",
+                    "com.acme.HostTimeoutException", "timed out", null, 64, "BURST", 2, 6, 40)),
+                    Map.of("sig-1", "2026-09-28T10:00:00Z"));
+            template.dropCollection(MongoRcaStore.INPUTS);
+            store.saveInput(input);
+            store.saveInput(input);
+            assertThat(template.getCollection(MongoRcaStore.INPUTS).countDocuments()).isEqualTo(1);
+            assertThat(store.latestInput()).contains(input);
+
+            store.saveReport(report);
+            store.saveReport(report); // the same day again replaces, it does not add
+
+            assertThat(template.getCollection(MongoRcaStore.REPORTS).countDocuments()).isEqualTo(1);
+            // Round trip: findings, evidence lists and markdown come back as they went in
+            assertThat(store.latestReport()).contains(report);
+            assertThat(store.reports(5)).hasSize(1);
+
+            Instant monday = Instant.parse("2026-09-28T10:00:00Z");
+            Instant tuesday = Instant.parse("2026-09-29T10:00:00Z");
+            store.recordSeen(Map.of("sig-1", new Instant[] { tuesday, tuesday }));
+            store.recordSeen(Map.of("sig-1", new Instant[] { monday, monday }));
+            store.recordSeen(Map.of("sig-1", new Instant[] { tuesday, tuesday.plusSeconds(60) }));
+
+            assertThat(store.firstSeen(List.of("sig-1", "never-seen"))).containsOnly(Map.entry("sig-1", monday));
+            assertThat(template.getCollection(MongoRcaStore.HISTORY).find().first().getDate("lastSeen").toInstant())
+                    .isEqualTo(tuesday.plusSeconds(60));
+        }
+    }
+
+    @Test
     void refusesToStartWithoutAUri() {
         assertThatThrownBy(() -> new MongoStorageConfig().mongoClient(props(" ")))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("MONGODB_URI is not set");
@@ -106,6 +158,7 @@ class MongoStorageTest {
         Instant t = Instant.parse(startedAt);
         return new MonitoringRun(id, t, t.plusMillis(250), "MANUAL", "COMPLETED", t.minusSeconds(86400), t,
                 "synthetic events", 3, List.of(new TransactionCount("cash-withdrawal", 2),
-                        new TransactionCount("POST /v1.0/deposits", 1)), null);
+                        new TransactionCount("POST /v1.0/deposits", 1)), 2, "withdrawal-p1 TimeoutException x2 (FEW)",
+                null);
     }
 }

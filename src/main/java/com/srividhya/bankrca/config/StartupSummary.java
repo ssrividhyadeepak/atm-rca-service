@@ -9,6 +9,7 @@ import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 import com.srividhya.bankrca.monitor.MonitoringService;
+import com.srividhya.bankrca.source.SourceRepository;
 import com.srividhya.bankrca.splunk.SplunkClient;
 import com.srividhya.bankrca.storage.RunStore;
 
@@ -23,9 +24,11 @@ public class StartupSummary implements ApplicationRunner {
     private final RunStore store;
     private final SplunkClient splunk;
     private final MonitoringService monitoring;
+    private final SourceRepository source;
 
     public StartupSummary(Environment env, RcaProperties props, RunStore store, SplunkClient splunk,
-            MonitoringService monitoring) {
+            MonitoringService monitoring, SourceRepository source) {
+        this.source = source;
         this.env = env;
         this.props = props;
         this.store = store;
@@ -41,6 +44,7 @@ public class StartupSummary implements ApplicationRunner {
         log.info("Mode:     {}", prod ? "PROD - real connections" : "LOCAL - nothing outside this machine is used");
         log.info("Storage:  {}", store.description());
         log.info("Splunk:   {}", splunk.description());
+        log.info("Source:   {}", source.description());
         log.info("Monitor:  namespace {}, components {}, last {}h", props.monitor().namespace(),
                 props.monitor().components().stream().map(c -> c.pattern()).toList(),
                 props.monitor().window().toHours());
@@ -49,6 +53,7 @@ public class StartupSummary implements ApplicationRunner {
         log.info("Health:   {}/actuator/health", base);
         log.info("Runs:     {}/api/runs", base);
         log.info("Failures: {}/api/failures", base);
+        log.info("Report:   {}/api/rca/latest.md", base);
         if (props.monitor().runOnStartup()) {
             monitoring.run("STARTUP");
         }

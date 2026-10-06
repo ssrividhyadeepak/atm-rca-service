@@ -2,7 +2,14 @@
   "namespace": "prod",
   "cluster": "east1",
   "datacenter": "dc1",
-  "bankIds": ["Q1231", "Q0457", "R2210", "Q3308", "T1187", "S0460"],
+  "bankIds": [
+    "Q1231",
+    "Q0457",
+    "R2210",
+    "Q3308",
+    "T1187",
+    "S0460"
+  ],
   "failures": [
     {
       "note": "Clustered in a 2.4 hour window: a config change lowered the timeout",
@@ -47,7 +54,7 @@
       "count": 22
     },
     {
-      "note": "Carries an account number, to show masking",
+      "note": "Carries an account number, to show masking. The gateway in front logs the same request (same trace id)",
       "component": "deposit-p1",
       "logger": "com.example.bank.deposit.ledger.LedgerClient",
       "level": "ERROR",
@@ -61,7 +68,15 @@
       ],
       "count": 14,
       "fromHoursAgo": 4.8,
-      "toHoursAgo": 2.4
+      "toHoursAgo": 2.4,
+      "alsoLoggedBy": [
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.UpstreamErrorHandler",
+          "level": "WARN",
+          "message": "upstream deposit-p1 answered status=502, passing the Exception to the caller"
+        }
+      ]
     },
     {
       "note": "Carries a (test) card number, to show masking",

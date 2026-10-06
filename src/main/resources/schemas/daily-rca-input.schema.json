@@ -1,0 +1,458 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/daily-rca-input.schema.json",
+  "title": "Daily RCA input",
+  "description": "Everything an RCA analyzer is given for one window: grouped, masked failure signatures, what is remembered about them, and where each root cause is in the deployed code. Version 1.1 (1.0 had no 'sources').",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schemaVersion",
+    "correlation",
+    "knownSince",
+    "sources",
+    "omittedSignatures"
+  ],
+  "properties": {
+    "id": {
+      "description": "The day the window ends on, UTC.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "schemaVersion": {
+      "const": "1.1"
+    },
+    "correlation": {
+      "$ref": "#/$defs/correlation"
+    },
+    "knownSince": {
+      "description": "Signature id to the time it was first ever seen, for signatures seen before this window.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "sources": {
+      "description": "Signature id to where its root cause is in the deployed code, for signatures with a stack trace.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/sourceLocation"
+      }
+    },
+    "omittedSignatures": {
+      "description": "Signatures left out because the window had more than the cap.",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "source",
+        "totalEvents",
+        "truncated",
+        "unparsed",
+        "byComponent",
+        "signatures",
+        "chains"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "source": {
+          "description": "Where the events came from.",
+          "type": "string"
+        },
+        "totalEvents": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "True when the search hit its row cap, so counts may be too low.",
+          "type": "boolean"
+        },
+        "unparsed": {
+          "description": "Events that were not in the expected format.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "byComponent": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "component",
+              "count"
+            ],
+            "properties": {
+              "component": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "signatures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/signature"
+          }
+        },
+        "chains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chain"
+          }
+        }
+      }
+    },
+    "signature": {
+      "description": "Events that are the same problem: same component, exception and message once per-request values are replaced.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "transaction",
+        "component",
+        "exception",
+        "level",
+        "logger",
+        "normalizedMessage",
+        "sampleMessage",
+        "count",
+        "percentOfComponent",
+        "percentOfTotal",
+        "firstSeen",
+        "lastSeen",
+        "timePattern",
+        "peakHour",
+        "peakHourCount",
+        "pods",
+        "podNames",
+        "bankIds",
+        "topBankIds",
+        "sampleTraceIds",
+        "sampleSessionIds",
+        "sampleStackTrace"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable id: the same problem has the same id on another day.",
+          "type": "string"
+        },
+        "transaction": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "exception": {
+          "description": "Fully qualified class, or null when the events name none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "level": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logger": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "normalizedMessage": {
+          "type": "string"
+        },
+        "sampleMessage": {
+          "description": "One real message, masked.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "percentOfComponent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "percentOfTotal": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "firstSeen": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastSeen": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timePattern": {
+          "enum": [
+            "BURST",
+            "STEADY",
+            "SCATTERED",
+            "FEW"
+          ]
+        },
+        "peakHour": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "peakHourCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pods": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "podNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5
+        },
+        "bankIds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "topBankIds": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "count"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "sampleTraceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3
+        },
+        "sampleSessionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3
+        },
+        "sampleStackTrace": {
+          "description": "Exception lines and application frames only; runs of framework frames are replaced by a count.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "chain": {
+      "description": "Components that logged failures for the same requests (same trace id), in the order they logged.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "components",
+        "traces",
+        "signatureIds",
+        "sampleTraceIds"
+      ],
+      "properties": {
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2
+        },
+        "traces": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "signatureIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sampleTraceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3
+        }
+      }
+    },
+    "commit": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "hash",
+        "time",
+        "author",
+        "message"
+      ],
+      "properties": {
+        "hash": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string"
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "sourceLocation": {
+      "description": "A stack frame looked up in the deployed code. When found is false, note says why and the code fields are null.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "found",
+        "note",
+        "repository",
+        "ref",
+        "className",
+        "method",
+        "path",
+        "line",
+        "code",
+        "snippet",
+        "lineLastChanged",
+        "fileLastChanged",
+        "recentCommits"
+      ],
+      "properties": {
+        "found": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ref": {
+          "description": "The branch, tag or commit production runs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "className": {
+          "type": "string"
+        },
+        "method": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "code": {
+          "description": "The line itself.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "snippet": {
+          "description": "A few lines around it, with line numbers.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lineLastChanged": {
+          "description": "The commit that last changed the line (git blame).",
+          "$ref": "#/$defs/commit"
+        },
+        "fileLastChanged": {
+          "description": "The latest commit to the file.",
+          "$ref": "#/$defs/commit"
+        },
+        "recentCommits": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/commit"
+          }
+        }
+      }
+    }
+  }
+}

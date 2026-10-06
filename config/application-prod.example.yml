@@ -20,6 +20,20 @@ rca:
       - pattern: "app-yourapp-balance-*"
         transaction: balance-inquiry
 
+  # Only needed when the code is in more than one repository. Each one is mirrored from
+  # 'remote-url' (with GIT_TOKEN), or read from an existing clone at 'path'. 'components' says
+  # which containers' code lives there; a repository without it is tried for every component.
+  # source:
+  #   deployed-ref: main
+  #   repositories:
+  #     - name: withdrawal
+  #       remote-url: https://git.example.com/bank/withdrawal-service.git
+  #       components: ["app-yourapp-withdrawal-*"]
+  #     - name: deposit
+  #       remote-url: https://git.example.com/bank/deposit-service.git
+  #       deployed-ref: release/2026.10
+  #       components: ["app-yourapp-deposit-*"]
+
   # Only needed if the default search does not fit, for example another exception filter.
   # It must return ts and _raw; the service extracts the fields from the raw event.
   # splunk:

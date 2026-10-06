@@ -1,0 +1,162 @@
+{
+  "repository": "sample",
+  "ref": "prod",
+  "files": [
+    {
+      "className": "com.example.bank.withdrawal.host.HostAuthClient",
+      "path": "withdrawal-service/src/main/java/com/example/bank/withdrawal/host/HostAuthClient.java",
+      "lineCount": 75,
+      "blocks": [
+        {
+          "start": 8,
+          "lines": [
+            "    // host-auth-gateway normally answers in 600-1200ms",
+            "    private static final int TIMEOUT_MS = 500;",
+            "    private static final int MAX_ATTEMPTS = 2;"
+          ]
+        },
+        {
+          "start": 71,
+          "lines": [
+            "",
+            "    private AuthResult call(AuthRequest request) throws SocketTimeoutException {",
+            "        return http.post(endpoint + \"/authorize\", request, TIMEOUT_MS);",
+            "    }",
+            "}"
+          ]
+        }
+      ],
+      "commits": [
+        {
+          "hash": "a9aa3e8f10",
+          "hoursAgo": 12,
+          "author": "alex.ng",
+          "message": "withdrawal: lower host auth timeout for faster failover",
+          "lines": [9]
+        },
+        {
+          "hash": "7dd6e39ef8",
+          "hoursAgo": 1344,
+          "author": "priya.raman",
+          "message": "withdrawal-service: initial import"
+        }
+      ]
+    },
+    {
+      "className": "com.example.bank.withdrawal.cash.CassettePlanner",
+      "path": "withdrawal-service/src/main/java/com/example/bank/withdrawal/cash/CassettePlanner.java",
+      "lineCount": 71,
+      "blocks": [
+        {
+          "start": 61,
+          "lines": [
+            "            remaining -= notes * cassette.denomination();",
+            "        }",
+            "        if (remaining > 0) {",
+            "            Cassette last = cassettes.get(cassettes.size() - 1);",
+            "            // nothing left that can make up the amount",
+            "            throw new InsufficientCassetteException(",
+            "                    \"cassette \" + last.number() + \" cannot dispense amount=\" + amount);",
+            "        }"
+          ]
+        }
+      ],
+      "commits": [
+        {
+          "hash": "7dd6e39ef8",
+          "hoursAgo": 1344,
+          "author": "priya.raman",
+          "message": "withdrawal-service: initial import"
+        }
+      ]
+    },
+    {
+      "className": "com.example.bank.deposit.validation.DepositValidator",
+      "path": "deposit-service/src/main/java/com/example/bank/deposit/validation/DepositValidator.java",
+      "lineCount": 40,
+      "blocks": [
+        {
+          "start": 30,
+          "lines": [
+            "        if (request.noteCount() > MAX_NOTES) {",
+            "            throw new DepositRejectedException(\"too many notes: \" + request.noteCount());",
+            "        }",
+            "        // Envelope is only present on envelope deposits; cash-counted deposits have none",
+            "        Envelope envelope = request.envelope();",
+            "        String currency = envelope.getCurrency();",
+            "        if (!CURRENCIES.contains(currency)) {",
+            "            throw new DepositRejectedException(\"unsupported currency: \" + currency);",
+            "        }",
+            "    }",
+            "}"
+          ]
+        }
+      ],
+      "commits": [
+        {
+          "hash": "a9559dfcfa",
+          "hoursAgo": 120,
+          "author": "mei.tanaka",
+          "message": "deposit: reject envelopes in unsupported currencies",
+          "lines": [11, 33, 34, 35, 36, 37, 38]
+        },
+        {
+          "hash": "a7ab4c1e02",
+          "hoursAgo": 1250,
+          "author": "mei.tanaka",
+          "message": "deposit-service: initial import"
+        }
+      ]
+    },
+    {
+      "className": "com.example.bank.deposit.ledger.LedgerClient",
+      "path": "deposit-service/src/main/java/com/example/bank/deposit/ledger/LedgerClient.java",
+      "lineCount": 65,
+      "blocks": [
+        {
+          "start": 61,
+          "lines": [
+            "",
+            "    private String call(CreditRequest request) {",
+            "        return rest.post().uri(\"/v1/credits\").body(request).retrieve().body(String.class);",
+            "    }",
+            "}"
+          ]
+        }
+      ],
+      "commits": [
+        {
+          "hash": "a7ab4c1e02",
+          "hoursAgo": 1250,
+          "author": "mei.tanaka",
+          "message": "deposit-service: initial import"
+        }
+      ]
+    },
+    {
+      "className": "com.example.bank.inquiry.CoreBankingClient",
+      "path": "inquiry-service/src/main/java/com/example/bank/inquiry/CoreBankingClient.java",
+      "lineCount": 72,
+      "blocks": [
+        {
+          "start": 68,
+          "lines": [
+            "    private Balance call(String accountId) throws SocketTimeoutException {",
+            "        // read timeout comes from core-banking.timeout-ms",
+            "        return http.get(endpoint + \"/v1/balances/\" + accountId, TIMEOUT_MS);",
+            "    }",
+            "}"
+          ]
+        }
+      ],
+      "commits": [
+        {
+          "hash": "c41d9e77aa",
+          "hoursAgo": 900,
+          "author": "sam.osei",
+          "message": "inquiry: add core banking client"
+        }
+      ]
+    }
+  ]
+}

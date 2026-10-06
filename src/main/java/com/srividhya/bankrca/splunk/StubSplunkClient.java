@@ -26,6 +26,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import com.srividhya.bankrca.config.RcaProperties;
+import com.srividhya.bankrca.splunk.StubData.FollowOn;
 import com.srividhya.bankrca.splunk.StubData.StubFailure;
 
 import tools.jackson.core.JacksonException;
@@ -126,7 +127,14 @@ public class StubSplunkClient implements SplunkClient {
             double to = f.toHoursAgo() == null ? 0 : f.toHoursAgo();
             require(from <= 24 && to >= 0 && from > to, where,
                     entry + "'fromHoursAgo' must be greater than 'toHoursAgo', both between 24 and 0");
-            total += f.count();
+            List<FollowOn> followOns = f.alsoLoggedBy() == null ? List.of() : f.alsoLoggedBy();
+            for (FollowOn also : followOns) {
+                require(hasText(also.component()) && hasText(also.logger()) && hasText(also.message()), where,
+                        entry + "each 'alsoLoggedBy' entry needs 'component', 'logger' and 'message'");
+                require(!Boolean.TRUE.equals(f.uiEvent()), where,
+                        entry + "'alsoLoggedBy' cannot be used with 'uiEvent': UI events have no trace id to share");
+            }
+            total += (long) f.count() * (1 + followOns.size());
         }
         require(total <= MAX_EVENTS, where, "the counts add up to " + total + "; the most is " + MAX_EVENTS);
         return data;
@@ -164,7 +172,25 @@ public class StubSplunkClient implements SplunkClient {
             long toMs = Math.max(1000, hoursToMillis(f.toHoursAgo() == null ? 0 : f.toHoursAgo()));
             for (int i = 0; i < f.count(); i++) {
                 Instant time = end.minusMillis(fromMs - (long) (rnd.nextDouble() * (fromMs - toMs)));
-                events.add(new Event(time, f.component(), raw(data, f, time, rnd)));
+                String bankId = data.bankIds().get(rnd.nextInt(data.bankIds().size()));
+                String trace = hex(rnd, 4) + "-" + hex(rnd, 2) + "-" + hex(rnd, 2) + "-" + hex(rnd, 2) + "-" + hex(rnd, 6);
+                String text = fill(f.message(), rnd);
+                String line = Boolean.TRUE.equals(f.uiEvent())
+                        ? "UI MOD BANK ID:" + bankId + " Timestamp: " + time + " CustomerTrackingSessionId:"
+                                + hex(rnd, 16).toUpperCase() + " " + text
+                        : "--" + bankId + "-" + trace + "- "
+                                + (hasText(f.exception()) ? "attached exception: " + f.exception() + ": " + text : text)
+                                + stack(f.stackTrace());
+                events.add(new Event(time, f.component(), raw(data, f.component(), f.logger(), f.level(), line, time, rnd)));
+                if (f.alsoLoggedBy() != null) {
+                    // The same request, seen a moment later by the next component up the call path
+                    Instant later = time;
+                    for (FollowOn also : f.alsoLoggedBy()) {
+                        later = later.plusMillis(5 + rnd.nextInt(40));
+                        events.add(new Event(later, also.component(), raw(data, also.component(), also.logger(),
+                                also.level(), "--" + bankId + "-" + trace + "- " + fill(also.message(), rnd), later, rnd)));
+                    }
+                }
             }
         }
         events.sort(Comparator.comparing(Event::time));
@@ -175,28 +201,18 @@ public class StubSplunkClient implements SplunkClient {
         return (long) (hours * Duration.ofHours(1).toMillis());
     }
 
-    private String raw(StubData data, StubFailure f, Instant time, Random rnd) {
-        String bankId = data.bankIds().get(rnd.nextInt(data.bankIds().size()));
-        String text = fill(f.message(), rnd);
-        String line;
-        if (Boolean.TRUE.equals(f.uiEvent())) {
-            line = "UI MOD BANK ID:" + bankId + " Timestamp: " + time + " CustomerTrackingSessionId:"
-                    + hex(rnd, 16).toUpperCase() + " " + text;
-        } else {
-            String trace = hex(rnd, 4) + "-" + hex(rnd, 2) + "-" + hex(rnd, 2) + "-" + hex(rnd, 2) + "-" + hex(rnd, 6);
-            line = "--" + bankId + "-" + trace + "- "
-                    + (hasText(f.exception()) ? "attached exception: " + f.exception() + ": " + text : text)
-                    + stack(f.stackTrace());
-        }
-        String level = hasText(f.level()) ? f.level().toUpperCase() : "ERROR";
-        String pod = f.component() + "-deploy-" + hex(new Random(f.component().hashCode()), 5) + "-"
+    /** One event as the platform writes it, around the application's log line. */
+    private String raw(StubData data, String component, String logger, String configuredLevel, String line,
+            Instant time, Random rnd) {
+        String level = hasText(configuredLevel) ? configuredLevel.toUpperCase() : "ERROR";
+        String pod = component + "-deploy-" + hex(new Random(component.hashCode()), 5) + "-"
                 + (rnd.nextBoolean() ? "8j4q8" : "pzt8l");
         String message = LOCAL.format(time.atOffset(ZoneOffset.ofHours(-7))) + " -- LEVEL: " + level + " "
-                + f.logger() + " " + (100000000 + rnd.nextInt(899999999)) + " -[http-nio-8080-exec-"
+                + logger + " " + (100000000 + rnd.nextInt(899999999)) + " -[http-nio-8080-exec-"
                 + (1 + rnd.nextInt(20)) + "] " + line;
 
         Map<String, Object> kubernetes = new LinkedHashMap<>();
-        kubernetes.put("container_name", f.component());
+        kubernetes.put("container_name", component);
         kubernetes.put("namespace_name", data.namespace());
         kubernetes.put("pod_name", pod);
         Map<String, Object> labels = new LinkedHashMap<>();

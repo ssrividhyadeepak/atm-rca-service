@@ -13,6 +13,8 @@ import com.srividhya.bankrca.failure.FailureBatch.TransactionCount;
  *
  * @param trigger SCHEDULED, MANUAL or STARTUP
  * @param status COMPLETED or FAILED
+ * @param signatures how many distinct problems the events grouped into; null on a failed run
+ * @param topSignature the most frequent one, in a few words
  * @param note why a run failed, or that the result was cut off at the row cap
  */
 public record MonitoringRun(
@@ -26,5 +28,7 @@ public record MonitoringRun(
         String source,
         int failedTransactions,
         List<TransactionCount> byTransaction,
+        Integer signatures,
+        String topSignature,
         String note) {
 }

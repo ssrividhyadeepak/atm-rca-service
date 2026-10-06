@@ -56,6 +56,11 @@ rca:
         transaction: balance-inquiry
       - pattern: "ui-base-*"
         transaction: ui
+      - pattern: "gateway-*"
+        transaction: gateway
+  # Where each day's analyzer input is written: daily-rca-input-<day>.json, and the latest
+  # one also as daily-rca-input.json
+  input-dir: ${RCA_INPUT_DIR:data/rca-input}
   parser:
     # The label in front of the id on UI events, as in "BANK ID:Q1231". The id is also read
     # from the "--Q1231-<trace id>-" prefix of other events, which needs no label.
@@ -64,6 +69,26 @@ rca:
     # Local runs only: the synthetic failures, as a JSON file you can edit. It is read again
     # on every run, so a change shows up without a restart.
     file: ${RCA_STUB_FILE:config/stub-failures.json}
+  source:
+    # stub = the sample source in a JSON file, no git needed; git = real repositories.
+    # The prod profile always uses git.
+    mode: ${RCA_SOURCE_MODE:stub}
+    # Local runs only: the sample source, as a JSON file you can edit
+    stub-file: ${RCA_STUB_SOURCE_FILE:config/stub-source.json}
+    # git, one repository: the remote to mirror (https), or leave it empty and point
+    # repo-dir at an existing clone. For several repositories, list them under
+    # 'repositories' in config/application-prod.yml instead.
+    remote-url: ${GIT_REMOTE_URL:}
+    repo-dir: ${RCA_REPO_DIR:data/repo}
+    # Read-only access token for the remotes, from the environment only, and the username the
+    # git host expects with it
+    token: ${GIT_TOKEN:}
+    username: ${GIT_USERNAME:x-access-token}
+    # Where mirrors are kept, one folder per repository
+    repos-dir: ${RCA_REPOS_DIR:data/repos}
+    # Branch, tag or commit that production runs: line numbers are resolved against it
+    deployed-ref: ${RCA_DEPLOYED_REF:main}
+    fetch-interval: 15m
   splunk:
     # stub = synthetic events, no Splunk needed; live = your Splunk over its REST API.
     # The prod profile always uses live.
@@ -106,3 +131,5 @@ rca:
   storage: mongo
   splunk:
     mode: live
+  source:
+    mode: git
