@@ -250,9 +250,30 @@ class ProdModeTest {
         assertThat(send("GET", "/api/runs", IDP.token("reader", "rca:read")).statusCode()).isEqualTo(200);
         assertThat(send("GET", "/api/failures", IDP.token("log-reader", "logs:read")).statusCode()).isEqualTo(200);
 
+        // MCP: the same rule, and a tool call needs the tool's scope
+        String listTools = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}";
+        assertThat(mcp(null, listTools).statusCode()).isEqualTo(401);
+        assertThat(mcp(devSigned, listTools).statusCode()).isEqualTo(401);
+        HttpResponse<String> listed = mcp(IDP.token("copilot", "kb:read"), listTools);
+        assertThat(listed.statusCode()).isEqualTo(200);
+        assertThat(listed.body()).contains("getFailureSummary").contains("lookupRunbook");
+        assertThat(mcp(IDP.token("copilot", "kb:read"), "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"getFailureSummary\",\"arguments\":{}}}").body())
+                .contains("Access denied: getFailureSummary needs scope rca:read");
+
         // The metadata tells a client which identity provider to go to
         HttpResponse<String> metadata = send("GET", "/.well-known/oauth-protected-resource", null);
         assertThat(json.readTree(metadata.body()).get("authorization_servers").get(0).asString()).isEqualTo(IDP.issuer());
+    }
+
+    private HttpResponse<String> mcp(String token, String body) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/mcp"))
+                .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (token != null) {
+            b.header("Authorization", "Bearer " + token);
+        }
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> send(String method, String path, String token) throws Exception {

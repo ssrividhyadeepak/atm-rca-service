@@ -69,6 +69,7 @@ public class StartupSummary implements ApplicationRunner {
         log.info("Failures: {}/api/failures", base);
         log.info("Report:   {}/api/rca/latest.md", base);
         log.info("Tools:    {}/api/tools  (assistant model: {})", base, assistant.modelName());
+        log.info("MCP:      {}/mcp  (Streamable HTTP, stateless)", base);
         if (props.monitor().runOnStartup()) {
             monitoring.run("STARTUP");
         }

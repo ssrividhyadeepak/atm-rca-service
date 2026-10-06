@@ -286,6 +286,42 @@ nothing else changes. The loop stops a model that keeps calling tools after four
 masks the question, and sends the model the system prompt in
 `src/main/resources/prompts/rca-assistant.md`.
 
+### MCP: the tools for Copilot and other clients
+
+The same four tools are served over the Model Context Protocol at `/mcp` (Streamable HTTP,
+stateless), together with a prompt, `daily_rca`, that tells a client's model how to put
+together the day's briefing from them. An MCP call goes through the same validation, scope
+check, rate limit and audit line as any other tool call, and a refused call comes back as a
+tool error the model can read and correct.
+
+With the service running locally (security `off`), connect a client:
+
+- **Copilot in VS Code:** open this folder; `.vscode/mcp.json` already points at
+  `http://localhost:8090/mcp`. Start the server from that file, switch Copilot Chat to agent
+  mode, and ask "what failed today?" or run the `daily_rca` prompt.
+- **Claude Code:** start `claude` in this folder; `.mcp.json` is picked up.
+
+With security `dev` or `jwt` the client must send a bearer token. In `.vscode/mcp.json`:
+
+```json
+{
+  "inputs": [{ "type": "promptString", "id": "rca-token", "description": "Bearer token", "password": true }],
+  "servers": {
+    "bank-rca-service": {
+      "type": "http",
+      "url": "http://localhost:8090/mcp",
+      "headers": { "Authorization": "Bearer ${input:rca-token}" }
+    }
+  }
+}
+```
+
+To check the endpoint without a client:
+
+```bash
+curl -s -X POST http://localhost:8090/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
 ### Security, rate limits and audit
 
 `rca.security.mode` (or `RCA_SECURITY_MODE`) decides who may call:
@@ -307,7 +343,7 @@ With `dev` and `jwt` the token's signature, expiry, issuer and audience
 | `kb:read` | Knowledge search; the `lookupRunbook` and `searchHistoricalRca` tools |
 | `code:read` | `/api/source/locate` |
 
-Listing tools and asking the assistant need any valid token; the assistant then acts with
+Listing tools, asking the assistant and connecting over MCP need any valid token; the assistant then acts with
 the caller's scopes, so a tool the caller may not use is refused to the assistant too.
 `/actuator/health` needs no token and, in prod, gives the status only.
 
@@ -452,6 +488,6 @@ that is not possible.
 | 5 | RCA engine without an LLM: `RcaAnalyzer` + rule-based implementation | done |
 | 6 | RAG over runbooks and past RCAs | done |
 | 7 | Tools a model can call, with a scripted stand-in for the model | done |
-| 8 | MCP server exposing the tools | |
+| 8 | MCP server exposing the tools | done |
 | 9 | Enterprise controls: authN/Z, rate limiting, validation, guardrails, audit | done |
 | 10 | Incident workflow: RCA, incident draft, approval, mock incident | |

@@ -73,7 +73,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/knowledge", "/api/knowledge/**").hasAuthority(scope(Scopes.KB_READ))
                         .requestMatchers(HttpMethod.POST, "/api/source/locate").hasAuthority(scope(Scopes.CODE_READ))
                         // Any valid token may list tools and ask; each tool call is checked for its own scope
-                        .requestMatchers("/api/tools", "/api/tools/**", "/api/assistant/**").authenticated()
+                        .requestMatchers("/api/tools", "/api/tools/**", "/api/assistant/**", "/mcp").authenticated()
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(rs -> rs
                         .jwt(Customizer.withDefaults())

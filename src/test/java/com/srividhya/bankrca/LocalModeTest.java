@@ -19,9 +19,9 @@ import org.springframework.test.context.ActiveProfiles;
 
 import com.mongodb.client.MongoClient;
 import com.networknt.schema.InputFormat;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersion;
+import com.networknt.schema.Schema;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SpecificationVersion;
 import com.srividhya.bankrca.storage.InMemoryRunStore;
 import com.srividhya.bankrca.storage.RunStore;
 
@@ -277,7 +277,7 @@ class LocalModeTest {
         String input = get("/api/rca/input").body();
         String schema = get("/api/rca/input/schema").body();
 
-        JsonSchema validator = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012).getSchema(schema);
+        Schema validator = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12).getSchema(schema);
         assertThat(validator.validate(input, InputFormat.JSON)).as("schema violations").isEmpty();
 
         // The schema is strict: a field it does not know, or a missing one, is a violation.
@@ -498,6 +498,68 @@ class LocalModeTest {
 
         assertThat(postJson("/api/assistant/ask", "{\"question\":\" \"}").statusCode()).isEqualTo(400);
         assertThat(postJson("/api/assistant/ask", "{\"question\":\"" + "x".repeat(1001) + "\"}").body()).contains("too long");
+    }
+
+    @Test
+    void servesTheToolsOverMcp() throws Exception {
+        post("/api/rca");
+
+        JsonNode init = mcp("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":"
+                + "\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1\"}}}");
+        assertThat(init.get("serverInfo").get("name").asString()).isEqualTo("bank-rca-service");
+        assertThat(init.get("instructions").asString()).contains("Start with getFailureSummary").contains("NO_MATCH");
+
+        JsonNode tools = mcp("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}").get("tools");
+        assertThat(tools).extracting(t -> t.get("name").asString()).containsExactlyInAnyOrder("getFailureSummary",
+                "getFinding", "lookupRunbook", "searchHistoricalRca");
+        for (JsonNode t : tools) {
+            assertThat(t.get("description").asString()).isNotBlank();
+            assertThat(t.get("inputSchema").get("type").asString()).isEqualTo("object");
+        }
+
+        JsonNode summary = mcp(mcpCall("getFailureSummary", "{}"));
+        assertThat(summary.path("isError").asBoolean()).isFalse();
+        JsonNode data = json.readTree(summary.get("content").get(0).get("text").asString());
+        assertThat(data.get("totalEvents").asInt()).isEqualTo(163);
+        assertThat(data.get("findings")).hasSize(8);
+
+        JsonNode runbook = json.readTree(mcp(mcpCall("lookupRunbook", "{\"query\":\"HostAuthTimeoutException\",\"limit\":1}"))
+                .get("content").get(0).get("text").asString());
+        assertThat(runbook.get("verdict").asString()).isEqualTo("MATCH");
+        assertThat(runbook.get("hits").get(0).get("id").asString()).isEqualTo("RB-001");
+
+        // A refused call comes back as a tool error the model can read and correct, not as a protocol failure
+        JsonNode refused = mcp(mcpCall("getFinding", "{\"rank\":99}"));
+        assertThat(refused.get("isError").asBoolean()).isTrue();
+        assertThat(refused.get("content").get(0).get("text").asString()).contains("'rank' must be between 1 and 8");
+    }
+
+    @Test
+    void offersTheDailyBriefingPromptOverMcp() throws Exception {
+        JsonNode prompts = mcp("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"prompts/list\"}").get("prompts");
+        assertThat(prompts).extracting(p -> p.get("name").asString()).containsExactly("daily_rca");
+
+        JsonNode prompt = mcp("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"prompts/get\",\"params\":{\"name\":\"daily_rca\","
+                + "\"arguments\":{}}}");
+        assertThat(prompt.get("description").asString()).isEqualTo("Daily failure briefing (daily-rca/v1)");
+        assertThat(prompt.get("messages").get(0).get("content").get("text").asString())
+                .startsWith("Prepare today's failure briefing").contains("getFailureSummary").contains("getFinding");
+    }
+
+    private static String mcpCall(String tool, String arguments) {
+        return "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"" + tool
+                + "\",\"arguments\":" + arguments + "}}";
+    }
+
+    /** The JSON-RPC result, whether the server answered with plain JSON or a one-event stream. */
+    private JsonNode mcp(String body) throws Exception {
+        HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/mcp"))
+                .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        String payload = response.body().lines().filter(l -> l.startsWith("data:")).map(l -> l.substring(5)).findFirst()
+                .orElse(response.body());
+        return json.readTree(payload).get("result");
     }
 
     @Test

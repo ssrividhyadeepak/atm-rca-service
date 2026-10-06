@@ -207,6 +207,81 @@ class SecurityTest {
         assertThat(send("POST", "/api/tools/lookupRunbook", looper, call, null).statusCode()).as("another tool").isEqualTo(200);
     }
 
+    @Test
+    void mcpNeedsATokenAndEnforcesEachToolsScope() throws Exception {
+        assertThat(status("POST", "/api/rca", token("operator", "rca:write"))).isEqualTo(200);
+        String list = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}";
+
+        HttpResponse<String> none = mcp(null, list, null);
+        assertThat(none.statusCode()).isEqualTo(401);
+        assertThat(none.headers().firstValue("WWW-Authenticate").orElseThrow()).contains("resource_metadata=");
+
+        // A valid token sees the tools; calling one needs that tool's scope
+        String kbOnly = token("copilot-kb", "kb:read");
+        assertThat(result(mcp(kbOnly, list, null)).get("tools")).hasSize(4);
+        JsonNode allowed = result(mcp(kbOnly, call("lookupRunbook", "{\"query\":\"LedgerPostingException\"}"), null));
+        assertThat(allowed.path("isError").asBoolean()).isFalse();
+        JsonNode denied = result(mcp(kbOnly, call("getFailureSummary", "{}"), null));
+        assertThat(denied.get("isError").asBoolean()).isTrue();
+        assertThat(denied.get("content").get(0).get("text").asString())
+                .contains("Access denied: getFailureSummary needs scope rca:read");
+        assertThat(lastAuditLine("copilot-kb", "getFailureSummary")).contains("\"outcome\":\"DENIED\"");
+
+        // The caller and its trace id are on the audit line of an MCP call too
+        String traceId = "0af7651916cd43dd8448eb211c80319c";
+        HttpResponse<String> traced = mcp(token("copilot", "rca:read"), call("getFailureSummary", "{}"),
+                "00-" + traceId + "-b7ad6b7169203331-01");
+        assertThat(result(traced).path("isError").asBoolean()).isFalse();
+        assertThat(traced.headers().firstValue("X-Trace-Id")).contains(traceId);
+        assertThat(lastAuditLine("copilot", "getFailureSummary")).contains("\"traceId\":\"" + traceId + "\"")
+                .contains("\"outcome\":\"OK\"");
+    }
+
+    @Test
+    void answersMcpCallsThatArriveAtTheSameTime() throws Exception {
+        assertThat(status("POST", "/api/rca", token("operator", "rca:write"))).isEqualTo(200);
+        String token = token("parallel", "rca:read");
+        List<java.util.concurrent.CompletableFuture<HttpResponse<String>>> calls = new java.util.ArrayList<>();
+        for (int rank = 1; rank <= 4; rank++) {
+            calls.add(http.sendAsync(mcpRequest(token, call("getFinding", "{\"rank\":" + rank + "}"), null),
+                    HttpResponse.BodyHandlers.ofString()));
+        }
+
+        for (int i = 0; i < calls.size(); i++) {
+            JsonNode finding = json.readTree(result(calls.get(i).get()).get("content").get(0).get("text").asString());
+            assertThat(finding.get("rank").asInt()).isEqualTo(i + 1);
+        }
+    }
+
+    private static String call(String tool, String arguments) {
+        return "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"" + tool
+                + "\",\"arguments\":" + arguments + "}}";
+    }
+
+    private HttpRequest mcpRequest(String token, String body, String traceparent) {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/mcp"))
+                .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (token != null) {
+            b.header("Authorization", "Bearer " + token);
+        }
+        if (traceparent != null) {
+            b.header("traceparent", traceparent);
+        }
+        return b.build();
+    }
+
+    private HttpResponse<String> mcp(String token, String body, String traceparent) throws Exception {
+        return http.send(mcpRequest(token, body, traceparent), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private JsonNode result(HttpResponse<String> response) {
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        String payload = response.body().lines().filter(l -> l.startsWith("data:")).map(l -> l.substring(5)).findFirst()
+                .orElse(response.body());
+        return json.readTree(payload).get("result");
+    }
+
     private String lastAuditLine(String client, String tool) throws Exception {
         List<String> lines = Files.readAllLines(Path.of("build/test-data/logs/audit.log"));
         return lines.stream().filter(l -> l.contains("\"client\":\"" + client + "\"") && l.contains("\"tool\":\"" + tool + "\""))
