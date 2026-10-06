@@ -17,7 +17,11 @@ import org.junit.jupiter.api.io.TempDir;
 import com.srividhya.bankrca.correlation.CorrelationResult;
 import com.srividhya.bankrca.correlation.CorrelationResult.FailureSignature;
 import com.srividhya.bankrca.rca.RcaReport.Finding;
+import com.srividhya.bankrca.knowledge.KeywordKnowledgeIndex;
+import com.srividhya.bankrca.knowledge.KnowledgeHit;
+import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.rca.StackTraces.Frame;
+import com.srividhya.bankrca.security.PiiMasker;
 import com.srividhya.bankrca.source.SourceLocation;
 import com.srividhya.bankrca.source.SourceRepository;
 import com.srividhya.bankrca.storage.InMemoryRcaStore;
@@ -39,13 +43,16 @@ class RcaServiceTest {
     };
 
     private final InMemoryRcaStore store = new InMemoryRcaStore();
+    /** An empty knowledge base: these tests add to it only by saving reports. */
+    private final KnowledgeService knowledge = new KnowledgeService(new KeywordKnowledgeIndex(), new PiiMasker(),
+            Path.of("build/no-knowledge-here"));
     @TempDir
     static Path dir;
 
     private final RcaInputFiles files = new RcaInputFiles(dir);
     private final RcaService service = new RcaService(
             new RuleBasedRcaAnalyzer(Clock.fixed(Instant.parse("2026-10-03T00:05:00Z"), ZoneOffset.UTC)),
-            new RcaInputBuilder(NO_SOURCE), files, store);
+            new RcaInputBuilder(NO_SOURCE), files, store, knowledge);
 
     private static final FailureSignature TIMEOUT = signature("timeout", "pay-p1", "com.acme.HostTimeoutException",
             "timed out", null, 64, "BURST", 2, 6, 40);
@@ -102,9 +109,9 @@ class RcaServiceTest {
         Path dayFile = dir.resolve("daily-rca-input-2026-10-02.json");
         String saved = Files.readString(dayFile);
         assertThat(Files.readString(dir.resolve("daily-rca-input.json"))).isEqualTo(saved);
-        assertThat(report.inputSchemaVersion()).isEqualTo("1.1");
+        assertThat(report.inputSchemaVersion()).isEqualTo("1.2");
         assertThat(report.inputHash()).isEqualTo(RcaInputFiles.hash(saved)).matches("[0-9a-f]{64}");
-        assertThat(report.markdown()).contains("Input: daily-rca-input-2026-10-02.json, schema 1.1, sha256 "
+        assertThat(report.markdown()).contains("Input: daily-rca-input-2026-10-02.json, schema 1.2, sha256 "
                 + report.inputHash().substring(0, 12));
         assertThat(service.latestInput().orElseThrow().id()).isEqualTo("2026-10-02");
 
@@ -115,23 +122,40 @@ class RcaServiceTest {
     }
 
     @Test
+    void savedReportsBecomeSearchableHistory() {
+        service.analyzeAndSave(window("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z", TIMEOUT));
+
+        List<KnowledgeHit> hits = knowledge.search("HostTimeoutException in pay-p1", KnowledgeService.PAST_RCA, 3, null);
+
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).id()).isEqualTo("RCA-2026-10-02-timeout");
+        assertThat(hits.get(0).matchedBy()).isEqualTo("EXACT");
+        assertThat(hits.get(0).metadata()).containsEntry("date", "2026-10-02").containsEntry("component", "pay-p1");
+        // A run on the same day does not find itself; the next day does
+        assertThat(knowledge.search("HostTimeoutException", KnowledgeService.PAST_RCA, 3, "2026-10-02")).isEmpty();
+        assertThat(knowledge.search("HostTimeoutException", KnowledgeService.PAST_RCA, 3, "2026-10-03")).hasSize(1);
+    }
+
+    @Test
     void refusesAnInputOfAnotherSchemaVersion() {
         RcaInput future = new RcaInput("2026-10-02", "2.0", window("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z", TIMEOUT),
-                java.util.Map.of(), java.util.Map.of(), 0);
+                java.util.Map.of(), java.util.Map.of(), java.util.Map.of(), 0);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.analyze(future))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Unsupported schemaVersion '2.0'; this service reads 1.0 and 1.1");
+                .hasMessage("Unsupported schemaVersion '2.0'; this service reads 1.0 and 1.1 and 1.2");
     }
 
     @Test
     void stillReadsAnInputOfTheEarlierVersionThatHadNoSources() {
         // As a file saved before 'sources' existed would be read back
         RcaInput old = files.fromJson(files.toJson(RcaInput.of(window("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z",
-                TIMEOUT), java.util.Map.of())).replace("\"1.1\"", "\"1.0\"").replaceFirst("\"sources\" : \\{ },?", ""));
+                TIMEOUT), java.util.Map.of())).replace("\"1.2\"", "\"1.0\"").replaceFirst("\"sources\" : \\{ },?", "")
+                .replaceFirst("\"knowledge\" : \\{ },?", ""));
 
         assertThat(old.schemaVersion()).isEqualTo("1.0");
         assertThat(old.sources()).isNull();
+        assertThat(old.knowledge()).isNull();
         assertThat(service.analyze(old).findings()).hasSize(1);
     }
 }

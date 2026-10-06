@@ -8,6 +8,8 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
+import com.srividhya.bankrca.assistant.RcaAssistant;
+import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.monitor.MonitoringService;
 import com.srividhya.bankrca.source.SourceRepository;
 import com.srividhya.bankrca.splunk.SplunkClient;
@@ -25,10 +27,15 @@ public class StartupSummary implements ApplicationRunner {
     private final SplunkClient splunk;
     private final MonitoringService monitoring;
     private final SourceRepository source;
+    private final KnowledgeService knowledge;
+    private final RcaAssistant assistant;
 
     public StartupSummary(Environment env, RcaProperties props, RunStore store, SplunkClient splunk,
-            MonitoringService monitoring, SourceRepository source) {
+            MonitoringService monitoring, SourceRepository source, KnowledgeService knowledge,
+            RcaAssistant assistant) {
+        this.assistant = assistant;
         this.source = source;
+        this.knowledge = knowledge;
         this.env = env;
         this.props = props;
         this.store = store;
@@ -45,6 +52,7 @@ public class StartupSummary implements ApplicationRunner {
         log.info("Storage:  {}", store.description());
         log.info("Splunk:   {}", splunk.description());
         log.info("Source:   {}", source.description());
+        log.info("Knowledge: {}", knowledge.description());
         log.info("Monitor:  namespace {}, components {}, last {}h", props.monitor().namespace(),
                 props.monitor().components().stream().map(c -> c.pattern()).toList(),
                 props.monitor().window().toHours());
@@ -54,6 +62,7 @@ public class StartupSummary implements ApplicationRunner {
         log.info("Runs:     {}/api/runs", base);
         log.info("Failures: {}/api/failures", base);
         log.info("Report:   {}/api/rca/latest.md", base);
+        log.info("Tools:    {}/api/tools  (assistant model: {})", base, assistant.modelName());
         if (props.monitor().runOnStartup()) {
             monitoring.run("STARTUP");
         }

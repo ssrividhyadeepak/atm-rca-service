@@ -58,6 +58,8 @@ rca:
         transaction: ui
       - pattern: "gateway-*"
         transaction: gateway
+  # Where logs/audit.log, the record of every tool call, is written
+  log-dir: ${RCA_LOG_DIR:logs}
   # Where each day's analyzer input is written: daily-rca-input-<day>.json, and the latest
   # one also as daily-rca-input.json
   input-dir: ${RCA_INPUT_DIR:data/rca-input}
@@ -69,6 +71,15 @@ rca:
     # Local runs only: the synthetic failures, as a JSON file you can edit. It is read again
     # on every run, so a change shows up without a restart.
     file: ${RCA_STUB_FILE:config/stub-failures.json}
+  knowledge:
+    # Runbooks and past RCAs as markdown, in runbooks/ and past-rcas/. The findings of every
+    # saved RCA report are added to the past RCAs automatically.
+    dir: ${RCA_KNOWLEDGE_DIR:config/knowledge}
+    # embedding = semantic search with a local model (downloaded once, about 90 MB, into
+    # model-cache-dir); keyword = word matching, no model. If the model cannot be loaded
+    # the service falls back to keyword by itself.
+    mode: ${RCA_KNOWLEDGE_MODE:embedding}
+    model-cache-dir: ${RCA_MODEL_CACHE_DIR:.model-cache}
   source:
     # stub = the sample source in a JSON file, no git needed; git = real repositories.
     # The prod profile always uses git.

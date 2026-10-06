@@ -17,12 +17,15 @@ import org.springframework.stereotype.Component;
 import com.srividhya.bankrca.correlation.CorrelationResult;
 import com.srividhya.bankrca.correlation.CorrelationResult.ComponentChain;
 import com.srividhya.bankrca.correlation.CorrelationResult.FailureSignature;
+import com.srividhya.bankrca.knowledge.KnowledgeRef;
+import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.rca.RcaReport.Finding;
 import com.srividhya.bankrca.source.SourceLocation;
 import com.srividhya.bankrca.source.SourceLocation.CommitInfo;
 
 /**
- * RCA without an LLM: a fixed set of rules over each signature. Every finding lists the rules
+ * RCA without an LLM: a fixed set of rules over each signature, its source location and the
+ * runbook and past RCAs retrieved for it. Every finding lists the rules
  * that fired and the evidence they used, so the reasoning can be checked and the same input
  * always gives the same report.
  *
@@ -68,7 +71,8 @@ public class RuleBasedRcaAnalyzer implements RcaAnalyzer {
 
         List<Finding> findings = new ArrayList<>();
         for (FailureSignature s : c.signatures()) {
-            findings.add(finding(s, c, byId, input.knownSince().get(s.id()), input.source(s.id())));
+            findings.add(finding(s, c, byId, input.knownSince().get(s.id()), input.source(s.id()),
+                    input.knowledge(s.id())));
         }
         findings.sort(Comparator.comparingInt((Finding f) -> SEVERITY_ORDER.indexOf(f.severity()))
                 .thenComparing(f -> f.status().equals("NEW") ? 0 : 1)
@@ -86,7 +90,7 @@ public class RuleBasedRcaAnalyzer implements RcaAnalyzer {
     }
 
     private Finding finding(FailureSignature s, CorrelationResult c, Map<String, FailureSignature> byId,
-            String knownSince, SourceLocation source) {
+            String knownSince, SourceLocation source, List<KnowledgeRef> knowledge) {
         List<String> rules = new ArrayList<>();
         List<String> evidence = new ArrayList<>();
         List<String> related = new ArrayList<>();
@@ -240,6 +244,24 @@ public class RuleBasedRcaAnalyzer implements RcaAnalyzer {
             }
         }
 
+        // What is already written down about this problem. A propagated failure is left to its origin.
+        if (origin == null) {
+            for (KnowledgeRef ref : knowledge) {
+                String how = ref.matchedBy().equals("EXACT") ? "written for this exception"
+                        : "similar wording, score " + ref.score();
+                if (ref.type().equals(KnowledgeService.RUNBOOK)) {
+                    rules.add("R12-runbook");
+                    evidence.add("Runbook " + ref.id() + " \"" + ref.title() + "\" (" + how + ")");
+                    action += " Runbook " + ref.id() + ": " + ref.summary();
+                } else {
+                    if (!rules.contains("R13-past-rca")) {
+                        rules.add("R13-past-rca");
+                    }
+                    evidence.add("Past RCA " + ref.id() + " \"" + ref.title() + "\" (" + how + "): " + ref.summary());
+                }
+            }
+        }
+
         if (s.pods() == 1 && s.count() >= 5) {
             rules.add("R8-single-pod");
             cause += " Only one pod is affected (" + s.podNames().get(0) + "), which points to that instance.";
@@ -251,7 +273,7 @@ public class RuleBasedRcaAnalyzer implements RcaAnalyzer {
 
         return new Finding(0, s.id(), knownSince == null ? "NEW" : "RECURRING", knownSince,
                 severity(s, category, rules), category, title, cause, confidence, evidence, action, location, rootCause,
-                source, suspectCommit, related, rules, s.component(), s.transaction(), s.exception(), s.count(), s.percentOfComponent(),
+                source, suspectCommit, origin == null ? knowledge : List.of(), related, rules, s.component(), s.transaction(), s.exception(), s.count(), s.percentOfComponent(),
                 s.timePattern(), s.firstSeen(), s.lastSeen(), s.sampleTraceIds());
     }
 
@@ -317,7 +339,7 @@ public class RuleBasedRcaAnalyzer implements RcaAnalyzer {
     private static Finding withRank(Finding f, int rank) {
         return new Finding(rank, f.signatureId(), f.status(), f.knownSince(), f.severity(), f.category(), f.title(),
                 f.likelyCause(), f.confidence(), f.evidence(), f.suggestedAction(), f.location(),
-                f.rootCauseException(), f.source(), f.suspectCommit(), f.relatedSignatureIds(), f.rules(), f.component(), f.transaction(),
+                f.rootCauseException(), f.source(), f.suspectCommit(), f.knowledge(), f.relatedSignatureIds(), f.rules(), f.component(), f.transaction(),
                 f.exception(), f.count(), f.percentOfComponent(), f.timePattern(), f.firstSeen(), f.lastSeen(),
                 f.sampleTraceIds());
     }

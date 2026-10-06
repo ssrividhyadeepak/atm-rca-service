@@ -1,5 +1,9 @@
 # Tests start runs themselves; the schedule stays off
 rca:
+  log-dir: build/test-data/logs
+  knowledge:
+    # Fast and model-free; KnowledgeEvalTest covers the embedding mode
+    mode: keyword
   input-dir: build/test-data/rca-input
   monitor:
     enabled: false

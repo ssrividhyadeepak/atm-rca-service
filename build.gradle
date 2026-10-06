@@ -17,7 +17,19 @@ repositories {
     mavenCentral()
 }
 
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.ai:spring-ai-bom:2.0.1'
+    }
+}
+
 dependencies {
+    // RAG: local embeddings (ONNX all-MiniLM-L6-v2, no API key, nothing leaves the machine) and
+    // Spring AI's in-memory vector store. Not the starter: the model is created by
+    // KnowledgeConfig, so a machine that cannot download it falls back to keyword search
+    // instead of failing to start.
+    implementation 'org.springframework.ai:spring-ai-transformers'
+    implementation 'org.springframework.ai:spring-ai-vector-store'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     // MongoDB through Spring Data's MongoTemplate. The client is created only when
@@ -52,4 +64,12 @@ tasks.named('processResources') {
 
 tasks.named('bootJar') {
     archiveFileName = 'bank-rca-service.jar'
+    // The ONNX runtime loads a native library
+    manifest {
+        attributes 'Enable-Native-Access': 'ALL-UNNAMED'
+    }
+}
+
+tasks.withType(Test).configureEach {
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
 }

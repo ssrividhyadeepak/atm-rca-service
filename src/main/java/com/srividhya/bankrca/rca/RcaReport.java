@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.data.annotation.Id;
 
+import com.srividhya.bankrca.knowledge.KnowledgeRef;
 import com.srividhya.bankrca.source.SourceLocation;
 
 /**
@@ -54,6 +55,7 @@ public record RcaReport(
      * @param location where in the application code the root cause was thrown, when a stack trace shows it
      * @param source the same place looked up in the deployed code: file, line, code and commits; null when there is no stack trace
      * @param suspectCommit a recent commit to that line or file that the rules point at; null when there is none
+     * @param knowledge the runbook and past RCAs that match this problem
      * @param relatedSignatureIds other findings about the same requests
      * @param rules the rules that fired, for anyone asking why the report says this
      */
@@ -73,6 +75,7 @@ public record RcaReport(
             String rootCauseException,
             SourceLocation source,
             String suspectCommit,
+            List<KnowledgeRef> knowledge,
             List<String> relatedSignatureIds,
             List<String> rules,
             String component,

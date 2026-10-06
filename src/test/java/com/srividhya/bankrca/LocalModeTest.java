@@ -250,6 +250,14 @@ class LocalModeTest {
         assertThat(defect.get("suspectCommit").asString()).isEqualTo("a9559dfcfa");
         assertThat(defect.get("rules").toString()).contains("R11-line-recently-changed");
         assertThat(defect.get("suggestedAction").asString()).startsWith("Review commit a9559dfcfa first.");
+        // The runbook and the past RCA written for the same exception are attached
+        assertThat(timeout.get("knowledge").get(0).get("id").asString()).isEqualTo("RB-001");
+        assertThat(timeout.get("knowledge").get(0).get("matchedBy").asString()).isEqualTo("EXACT");
+        assertThat(timeout.get("knowledge").get(1).get("id").asString()).isEqualTo("RCA-2026-03-14");
+        assertThat(timeout.get("suggestedAction").asString()).contains("Runbook RB-001: Roll back the change to the timeout setting");
+        assertThat(defect.get("knowledge").get(0).get("id").asString()).isEqualTo("RB-004");
+        // Nothing is attached to a failure that only repeats another component's
+        assertThat(report.get("findings").get(4).get("knowledge")).isEmpty();
         // Old code is not blamed
         assertThat(report.get("findings").get(2).get("suspectCommit").isNull()).isTrue();
         assertThat(report.get("findings").get(2).get("source").get("found").asBoolean()).isTrue();
@@ -276,12 +284,12 @@ class LocalModeTest {
         // That is what makes this test fail when the record changes and the schema does not.
         assertThat(validator.validate(input.replaceFirst("\\{", "{\"surprise\":1,"), InputFormat.JSON)).isNotEmpty();
         assertThat(validator.validate(input.replace("\"timePattern\"", "\"timePatern\""), InputFormat.JSON)).isNotEmpty();
-        assertThat(validator.validate(input.replace("\"schemaVersion\" : \"1.1\"", "\"schemaVersion\" : \"9\""),
+        assertThat(validator.validate(input.replace("\"schemaVersion\" : \"1.2\"", "\"schemaVersion\" : \"9\""),
                 InputFormat.JSON)).isNotEmpty();
 
         JsonNode parsed = json.readTree(input);
         assertThat(parsed.get("id").asString()).isEqualTo("2026-10-02");
-        assertThat(parsed.get("schemaVersion").asString()).isEqualTo("1.1");
+        assertThat(parsed.get("schemaVersion").asString()).isEqualTo("1.2");
         // Five of the eight signatures have a stack trace, and each was looked up in the sample source
         assertThat(parsed.get("sources")).hasSize(5);
         assertThat(parsed.get("sources").toString()).doesNotContain("\"found\":false");
@@ -295,7 +303,7 @@ class LocalModeTest {
                 .doesNotContain("org.springframework");
 
         // The report names the input it was built from
-        assertThat(report.get("inputSchemaVersion").asString()).isEqualTo("1.1");
+        assertThat(report.get("inputSchemaVersion").asString()).isEqualTo("1.2");
         assertThat(report.get("inputHash").asString()).matches("[0-9a-f]{64}");
     }
 
@@ -319,9 +327,9 @@ class LocalModeTest {
         // The saved report of the day is untouched
         assertThat(json.readTree(get("/api/rca/latest").body()).get("findings")).hasSize(original.get("findings").size());
 
-        HttpResponse<String> wrongVersion = postJson("/api/rca/replay", input.replace("\"1.1\"", "\"7.3\""));
+        HttpResponse<String> wrongVersion = postJson("/api/rca/replay", input.replace("\"1.2\"", "\"7.3\""));
         assertThat(wrongVersion.statusCode()).isEqualTo(400);
-        assertThat(wrongVersion.body()).contains("Unsupported schemaVersion '7.3'; this service reads 1.0 and 1.1");
+        assertThat(wrongVersion.body()).contains("Unsupported schemaVersion '7.3'; this service reads 1.0 and 1.1 and 1.2");
         assertThat(postJson("/api/rca/replay", "{\"schemaVersion\":\"1.0\"}").statusCode()).isEqualTo(400);
     }
 
@@ -345,6 +353,151 @@ class LocalModeTest {
         HttpResponse<String> noFrame = postText("/api/source/locate", "it just broke");
         assertThat(noFrame.statusCode()).isEqualTo(400);
         assertThat(noFrame.body()).contains("No application frame found");
+    }
+
+    @Test
+    void searchesRunbooksAndPastRcas() throws Exception {
+        JsonNode status = json.readTree(get("/api/knowledge").body());
+        assertThat(status.get("runbooks").asInt()).isEqualTo(6);
+        assertThat(status.get("pastRcas").asInt()).isGreaterThanOrEqualTo(5);
+        assertThat(status.get("search").asString()).isEqualTo("keyword");
+
+        JsonNode exact = json.readTree(get("/api/knowledge/search?type=runbook&q=LedgerPostingException").body());
+        assertThat(exact.get(0).get("id").asString()).isEqualTo("RB-002");
+        assertThat(exact.get(0).get("matchedBy").asString()).isEqualTo("EXACT");
+        assertThat(exact.get(0).get("summary").asString()).startsWith("Nothing to do inside the maintenance window");
+
+        JsonNode words = json.readTree(get("/api/knowledge/search?type=past-rca&q=firewall%20change%20added%20latency"
+                + "%20to%20the%20authorization%20gateway").body());
+        assertThat(words.get(0).get("id").asString()).isEqualTo("RCA-2026-03-14");
+        assertThat(words.get(0).get("matchedBy").asString()).isEqualTo("SEMANTIC");
+        assertThat(words.get(0).get("related").asBoolean()).isTrue();
+        assertThat(words.get(0).get("matchedPassage").asString()).contains("firewall");
+
+        assertThat(get("/api/knowledge/search?type=nonsense&q=x").statusCode()).isEqualTo(400);
+        assertThat(get("/api/knowledge/search?type=runbook&q=%20").statusCode()).isEqualTo(400);
+        assertThat(json.readTree(post("/api/knowledge/reload").body()).get("runbooks").asInt()).isEqualTo(6);
+    }
+
+    @Test
+    void listsTheToolsWithTheirSchemas() throws Exception {
+        JsonNode tools = json.readTree(get("/api/tools").body());
+
+        assertThat(tools).extracting(t -> t.get("name").asString())
+                .containsExactly("getFailureSummary", "getFinding", "lookupRunbook", "searchHistoricalRca");
+        JsonNode lookup = tools.get(2);
+        assertThat(lookup.get("description").asString()).startsWith("Find the runbook for a problem.").contains("NO_MATCH");
+        // Input schema, generated from the method signature: what a model is given to fill in
+        assertThat(lookup.get("inputSchema").get("type").asString()).isEqualTo("object");
+        assertThat(lookup.get("inputSchema").get("properties").get("query").get("type").asString()).isEqualTo("string");
+        assertThat(lookup.get("inputSchema").get("properties").get("query").get("description").asString())
+                .contains("at most 500 characters");
+        assertThat(lookup.get("inputSchema").get("properties").get("limit").get("type").asString()).isEqualTo("integer");
+        assertThat(lookup.get("inputSchema").get("required").toString()).isEqualTo("[\"query\"]");
+        assertThat(lookup.get("outputSchema").get("properties").has("verdict")).isTrue();
+        assertThat(tools.get(1).get("inputSchema").get("required").toString()).isEqualTo("[\"rank\"]");
+        assertThat(tools.get(0).get("stats").has("calls")).isTrue();
+    }
+
+    @Test
+    void callsAToolByNameWithJsonArguments() throws Exception {
+        post("/api/rca");
+
+        JsonNode summary = json.readTree(postJson("/api/tools/getFailureSummary", "{}").body());
+        assertThat(summary.get("reportId").asString()).isEqualTo("2026-10-02");
+        assertThat(summary.get("totalEvents").asInt()).isEqualTo(163);
+        assertThat(summary.get("findings")).hasSize(8);
+        assertThat(summary.get("findings").get(0).toString()).isEqualTo("{\"rank\":1,\"severity\":\"HIGH\",\"status\":\"NEW\","
+                + "\"category\":\"DOWNSTREAM_TIMEOUT\",\"component\":\"withdrawal-p1\",\"problem\":\"HostAuthTimeoutException\","
+                + "\"count\":64,\"timePattern\":\"BURST\",\"suspectCommit\":\"a9aa3e8f10\",\"runbook\":\"RB-001\"}");
+
+        JsonNode finding = json.readTree(postJson("/api/tools/getFinding", "{\"rank\":2}").body());
+        assertThat(finding.get("title").asString()).isEqualTo("NullPointerException in deposit-p1");
+        assertThat(finding.get("source").get("line").asInt()).isEqualTo(35);
+
+        JsonNode runbook = json.readTree(postJson("/api/tools/lookupRunbook", "{\"query\":\"LedgerPostingException\",\"limit\":1}").body());
+        assertThat(runbook.get("verdict").asString()).isEqualTo("MATCH");
+        assertThat(runbook.get("hits")).hasSize(1);
+        assertThat(runbook.get("hits").get(0).get("id").asString()).isEqualTo("RB-002");
+
+        // The past, not today's own report
+        JsonNode history = json.readTree(postJson("/api/tools/searchHistoricalRca", "{\"query\":\"HostAuthTimeoutException\"}").body());
+        assertThat(history.get("verdict").asString()).isEqualTo("MATCH");
+        assertThat(history.get("hits").get(0).get("id").asString()).isEqualTo("RCA-2026-03-14");
+        assertThat(history.toString()).doesNotContain("RCA-2026-10-02");
+
+        JsonNode nothing = json.readTree(postJson("/api/tools/lookupRunbook", "{\"query\":\"the log volume filled the disk\"}").body());
+        assertThat(nothing.get("verdict").asString()).isEqualTo("NO_MATCH");
+    }
+
+    @Test
+    void refusesBadToolCallsWithAMessageThatSaysWhatToSend() throws Exception {
+        post("/api/rca");
+
+        HttpResponse<String> rank = postJson("/api/tools/getFinding", "{\"rank\":99}");
+        assertThat(rank.statusCode()).isEqualTo(400);
+        assertThat(rank.body()).contains("'rank' must be between 1 and 8");
+        assertThat(postJson("/api/tools/getFinding", "{}").body()).contains("'rank' must be between 1 and 8");
+        assertThat(postJson("/api/tools/lookupRunbook", "{\"limit\":1}").body()).contains("'query' is required");
+        assertThat(postJson("/api/tools/lookupRunbook", "{\"query\":\"x\",\"limit\":50}").body()).contains("'limit' must be between 1 and 5");
+        assertThat(postJson("/api/tools/lookupRunbook", "{\"query\":\"" + "x".repeat(501) + "\"}").body()).contains("too long");
+
+        HttpResponse<String> wrongType = postJson("/api/tools/getFinding", "{\"rank\":\"two\"}");
+        assertThat(wrongType.statusCode()).isEqualTo(400);
+        assertThat(wrongType.body()).contains("do not fit the tool's input schema");
+        assertThat(postJson("/api/tools/getFinding", "[1]").statusCode()).isEqualTo(400);
+        assertThat(postJson("/api/tools/getFinding", "{not json").body()).contains("not valid JSON");
+
+        HttpResponse<String> unknown = postJson("/api/tools/dropTables", "{}");
+        assertThat(unknown.statusCode()).isEqualTo(404);
+        assertThat(unknown.body()).contains("There is no tool 'dropTables'").contains("getFailureSummary");
+    }
+
+    @Test
+    void recordsEveryToolCallInTheAuditLog() throws Exception {
+        post("/api/rca");
+        postJson("/api/tools/lookupRunbook", "{\"query\":\"card 4111111111111111 was refused\"}");
+        postJson("/api/tools/getFinding", "{\"rank\":99}");
+
+        List<String> lines = java.nio.file.Files.readAllLines(java.nio.file.Path.of("build/test-data/logs/audit.log"));
+        String refused = lines.get(lines.size() - 1);
+        String ok = lines.get(lines.size() - 2);
+        assertThat(ok).contains("\"tool\":\"lookupRunbook\"").contains("\"outcome\":\"OK\"").contains("\"durationMs\":")
+                .containsPattern("\"callId\":\"[0-9a-f]{8}\"")
+                // Arguments are masked before they are written
+                .contains("card ************1111 was refused").doesNotContain("4111111111111111");
+        assertThat(refused).contains("\"tool\":\"getFinding\"").contains("\"outcome\":\"REJECTED\"")
+                .contains("\"error\":\"'rank' must be between 1 and 8");
+
+        // The same calls are counted
+        JsonNode stats = json.readTree(get("/api/tools").body()).get(1).get("stats");
+        assertThat(stats.get("rejected").asInt()).isGreaterThanOrEqualTo(1);
+        assertThat(stats.get("calls").asInt()).isEqualTo(stats.get("ok").asInt() + stats.get("rejected").asInt()
+                + stats.get("errors").asInt());
+    }
+
+    @Test
+    void theAssistantAnswersByCallingTools() throws Exception {
+        post("/api/rca");
+
+        JsonNode today = json.readTree(postJson("/api/assistant/ask", "{\"question\":\"What failed today?\"}").body());
+        assertThat(today.get("model").asString()).isEqualTo("scripted (no LLM configured)");
+        assertThat(today.get("complete").asBoolean()).isTrue();
+        assertThat(today.get("toolCalls").toString()).isEqualTo("[{\"tool\":\"getFailureSummary\",\"arguments\":\"{}\"}]");
+        assertThat(today.get("answer").asString()).startsWith("8 distinct problems in 163 failure events")
+                .contains("1. HIGH HostAuthTimeoutException in withdrawal-p1 (64 events, BURST).");
+
+        JsonNode both = json.readTree(postJson("/api/assistant/ask",
+                "{\"question\":\"Is there a runbook for HostAuthTimeoutException, and has it happened before?\"}").body());
+        assertThat(both.get("toolCalls")).extracting(t -> t.get("tool").asString())
+                .containsExactly("lookupRunbook", "searchHistoricalRca");
+        assertThat(both.get("answer").asString()).contains("Runbook RB-001").contains("Past RCA RCA-2026-03-14");
+
+        JsonNode none = json.readTree(postJson("/api/assistant/ask", "{\"question\":\"How do I fix a full disk?\"}").body());
+        assertThat(none.get("answer").asString()).isEqualTo("There is no runbook for this.");
+
+        assertThat(postJson("/api/assistant/ask", "{\"question\":\" \"}").statusCode()).isEqualTo(400);
+        assertThat(postJson("/api/assistant/ask", "{\"question\":\"" + "x".repeat(1001) + "\"}").body()).contains("too long");
     }
 
     @Test

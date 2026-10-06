@@ -1,5 +1,6 @@
 package com.srividhya.bankrca.rca;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -8,11 +9,15 @@ import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.srividhya.bankrca.correlation.CorrelationResult;
 import com.srividhya.bankrca.correlation.CorrelationResult.ComponentChain;
 import com.srividhya.bankrca.correlation.CorrelationResult.FailureSignature;
+import com.srividhya.bankrca.knowledge.KnowledgeHit;
+import com.srividhya.bankrca.knowledge.KnowledgeRef;
+import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.rca.StackTraces.Frame;
 import com.srividhya.bankrca.source.SourceLocation;
 import com.srividhya.bankrca.source.SourceRepository;
@@ -28,13 +33,22 @@ public class RcaInputBuilder {
 
     static final int MAX_SIGNATURES = 50;
     static final int MAX_APPLICATION_FRAMES = 8;
+    static final int MAX_PAST_RCAS = 2;
 
     private static final Logger log = LoggerFactory.getLogger(RcaInputBuilder.class);
 
     private final SourceRepository source;
+    private final KnowledgeService knowledge;
 
-    public RcaInputBuilder(SourceRepository source) {
+    @Autowired
+    public RcaInputBuilder(SourceRepository source, KnowledgeService knowledge) {
         this.source = source;
+        this.knowledge = knowledge;
+    }
+
+    /** Without a knowledge base: nothing is attached. */
+    public RcaInputBuilder(SourceRepository source) {
+        this(source, null);
     }
 
     public RcaInput build(CorrelationResult c, Map<String, String> knownSince) {
@@ -58,8 +72,41 @@ public class RcaInputBuilder {
                 c.unparsed(), c.byComponent(), kept, chains);
         Map<String, String> known = knownSince.entrySet().stream().filter(e -> ids.contains(e.getKey()))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-        return new RcaInput(c.to().substring(0, 10), RcaInput.SCHEMA_VERSION, cut, known, sources,
+        String day = c.to().substring(0, 10);
+        Map<String, List<KnowledgeRef>> refs = new LinkedHashMap<>();
+        if (knowledge != null) {
+            for (FailureSignature s : kept) {
+                List<KnowledgeRef> found = references(s, day);
+                if (!found.isEmpty()) {
+                    refs.put(s.id(), found);
+                }
+            }
+        }
+        return new RcaInput(day, RcaInput.SCHEMA_VERSION, cut, known, sources, refs,
                 c.signatures().size() - kept.size());
+    }
+
+    /**
+     * The best runbook and up to two past RCAs, and only those that really match. Past RCAs
+     * from this day on are left out, so a run is not matched against its own earlier result.
+     */
+    private List<KnowledgeRef> references(FailureSignature s, String day) {
+        String query = s.component() + " " + (s.exception() == null ? "" : s.exception() + " ") + s.normalizedMessage();
+        List<KnowledgeRef> refs = new ArrayList<>();
+        try {
+            knowledge.search(query, KnowledgeService.RUNBOOK, 1, null).stream().filter(KnowledgeHit::related)
+                    .forEach(h -> refs.add(ref(h)));
+            knowledge.search(query, KnowledgeService.PAST_RCA, MAX_PAST_RCAS, day).stream().filter(KnowledgeHit::related)
+                    .forEach(h -> refs.add(ref(h)));
+        } catch (RuntimeException e) {
+            log.warn("Knowledge lookup for signature {} failed: {}", s.id(), e.getMessage());
+        }
+        return refs;
+    }
+
+    private static KnowledgeRef ref(KnowledgeHit h) {
+        return new KnowledgeRef(h.type(), h.id(), h.title(), h.matchedBy(), h.score(), h.metadata().get("date"),
+                h.summary());
     }
 
     /** A lookup that fails (git unreachable, a broken stub file) costs the finding its code context, not the run. */

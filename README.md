@@ -10,6 +10,7 @@ report and drafts an incident for approval. Built in ten runnable steps; see the
 | Storage | In memory, lost on restart | MongoDB, from `MONGODB_URI` |
 | Failed transactions | A synthetic day of bank failures | Your Splunk, from `SPLUNK_URL` |
 | Application code | Sample source in a JSON file | Your git repositories, from `GIT_REMOTE_URL` |
+| Runbooks and past RCAs | Samples in `config/knowledge/` | Your folder, from `RCA_KNOWLEDGE_DIR`, plus every report the service saves |
 | Outside connections | None | Each one configured by environment variables |
 
 The service prints its mode and connections when it starts. With the prod profile it refuses
@@ -17,7 +18,8 @@ to start if a required setting is missing or a connection cannot be made.
 
 ## Run locally
 
-Needs JDK 17 or later and, the first time, network access for the Gradle dependencies.
+Needs JDK 17 or later and, the first time, network access for the Gradle dependencies and
+the embedding model (about 90 MB).
 
 ```bash
 ./gradlew bootJar
@@ -136,6 +138,10 @@ followed by the first monitoring run with the number of failed transactions it r
 | `RCA_REPO_DIR` | instead of a remote | An existing clone to read |
 | `RCA_NAMESPACE` | no (`prod`) | Kubernetes namespace whose events are searched |
 | `RCA_INPUT_DIR` | no (`data/rca-input`) | Where the daily RCA input files are written |
+| `RCA_LOG_DIR` | no (`logs`) | Where `audit.log`, the record of every tool call, is written |
+| `RCA_KNOWLEDGE_DIR` | no (`config/knowledge`) | Folder with `runbooks/` and `past-rcas/` |
+| `RCA_KNOWLEDGE_MODE` | no (`embedding`) | `embedding` or `keyword` |
+| `RCA_MODEL_CACHE_DIR` | no (`.model-cache`) | Where the embedding model is kept |
 | `RCA_PORT` | no (`8090`) | HTTP port |
 | `RCA_BIND_ADDRESS` | no (`127.0.0.1`) | Address to listen on |
 | `RCA_MONITOR_ENABLED` | no (`true`) | Scheduled monitoring run on or off |
@@ -197,6 +203,86 @@ To try a lookup on its own, which is also the quickest check of the git settings
 printf 'x\n\tat com.example.bank.deposit.validation.DepositValidator.validate(DepositValidator.java:35)\n' | curl -s -X POST "http://localhost:8090/api/source/locate?component=deposit-p1" -H "Content-Type: text/plain" --data-binary @-
 ```
 
+### Runbooks and past RCAs (RAG)
+
+Each finding is matched against a knowledge base: runbooks and past RCAs, as markdown files
+in `config/knowledge/runbooks/` and `config/knowledge/past-rcas/`. The findings of every
+RCA report the service saves are added to the past RCAs by themselves, so the history grows.
+
+Matching has two steps, and the result says which one found the document:
+
+| `matchedBy` | Meaning |
+|---|---|
+| `EXACT` | The document is written for the same exception class (its `Exceptions:` or `Exception:` line) |
+| `SEMANTIC` | No such document; this one reads alike. It comes with a similarity score from 0 to 1 and is attached only at 0.51 or above |
+
+Semantic search uses a local embedding model (all-MiniLM-L6-v2) and Spring AI's in-memory
+vector store. Nothing leaves the machine. The model, about 90 MB, is downloaded once into
+`.model-cache/`. If it cannot be loaded - no download access - the service starts anyway on
+keyword search and says so in the log; set `RCA_KNOWLEDGE_MODE=keyword` to choose that.
+
+A matched runbook adds its mitigation to the finding's next step; matched past RCAs add
+their root cause and resolution to the evidence. To search by hand:
+
+```bash
+curl -s -G http://localhost:8090/api/knowledge/search --data-urlencode "q=deposits not credited, the ledger is unavailable" --data-urlencode "type=runbook"
+```
+
+Use `type=past-rca` for the history. After adding or editing files,
+`curl -s -X POST http://localhost:8090/api/knowledge/reload`.
+
+To add a runbook, copy one in `config/knowledge/runbooks/`: a title, the `- Key: value`
+lines (`Id`, `Components`, `Exceptions`), then `## Signals`, `## Triage` and
+`## Mitigation` sections. `evals/knowledge-cases.json` holds the questions the search is
+tested with; add a case when you add a document.
+
+### Tools an assistant can call
+
+Four read-only functions, each with a name, a description and a JSON Schema for its
+arguments generated from the method signature:
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `getFailureSummary` | none | The latest analysis in brief: headline and one line per finding |
+| `getFinding` | `rank` | Everything about one finding: cause, next step, evidence, source line, runbook |
+| `lookupRunbook` | `query`, `limit` (optional) | Verdict `MATCH` or `NO_MATCH`, and the runbooks with how they matched |
+| `searchHistoricalRca` | `query`, `limit` (optional) | The same for past RCAs, excluding the day being analysed |
+
+List them with their input and output schemas and call counts, or call one by name with
+JSON arguments - what a model does, done by hand:
+
+```bash
+curl -s http://localhost:8090/api/tools
+```
+
+```bash
+curl -s -X POST http://localhost:8090/api/tools/lookupRunbook -H "Content-Type: application/json" -d '{"query":"LedgerPostingException"}'
+```
+
+- **Validation:** a call with a bad argument is refused with a message that says what to
+  send instead (`'rank' must be between 1 and 8`), so a model can correct itself. An unknown
+  tool is a 404; arguments of the wrong type or invalid JSON are a 400.
+- **Audit:** every call is one JSON line in `logs/audit.log`: time, call id, tool, masked
+  arguments, duration and outcome (`OK`, `REJECTED` or `ERROR`).
+
+### The assistant
+
+`POST /api/assistant/ask` answers a question by letting a chat model call those tools. The
+answer comes with the tool calls that produced it.
+
+```bash
+curl -s -X POST http://localhost:8090/api/assistant/ask -H "Content-Type: application/json" -d '{"question":"Is there a runbook for HostAuthTimeoutException, and has it happened before?"}'
+```
+
+There is no LLM behind it yet. The model is a scripted stand-in (`ScriptedChatModel`) that
+picks tools by keywords and fills in fixed templates: it proves the loop works - question,
+tool calls, tool results, answer - and understands nothing. The loop itself
+(`RcaAssistant`) is written against Spring AI's `ChatModel` and `ToolCallingManager`, so a
+real model replaces the stand-in by adding a Spring AI model starter and its settings;
+nothing else changes. The loop stops a model that keeps calling tools after four rounds,
+masks the question, and sends the model the system prompt in
+`src/main/resources/prompts/rca-assistant.md`.
+
 ### The daily RCA input
 
 Before the analyzer runs, everything it is allowed to see is written to one file,
@@ -208,7 +294,7 @@ and application frames.
 | Use | How |
 |---|---|
 | See what the analyzer was given | `GET /api/rca/input` |
-| Check its shape | `GET /api/rca/input/schema`, a JSON Schema (version `1.1`, which added `sources`; `1.0` inputs can still be replayed); a test fails if the service writes anything the schema does not describe |
+| Check its shape | `GET /api/rca/input/schema`, a JSON Schema (version `1.2`; `1.1` added `sources` and `1.2` added `knowledge`, and earlier inputs can still be replayed); a test fails if the service writes anything the schema does not describe |
 | Trace a report back to its input | The report carries `inputHash`, the SHA-256 of the saved file |
 | Re-run the analysis on a past or edited day | `POST /api/rca/replay` with an input as the body; nothing is read from Splunk and nothing is saved |
 
@@ -305,8 +391,8 @@ that is not possible.
 | 3 | RCA input contract: sanitized `daily-rca-input.json` with a JSON Schema | done |
 | 4 | Failure correlation by exception, component, time and trace id | done |
 | 5 | RCA engine without an LLM: `RcaAnalyzer` + rule-based implementation | done |
-| 6 | RAG over runbooks and past RCAs | |
-| 7 | Tools the LLM can call | |
+| 6 | RAG over runbooks and past RCAs | done |
+| 7 | Tools a model can call, with a scripted stand-in for the model | done |
 | 8 | MCP server exposing the tools | |
 | 9 | Enterprise controls: authN/Z, rate limiting, validation, guardrails, audit | |
 | 10 | Incident workflow: RCA, incident draft, approval, mock incident | |

@@ -10,3 +10,4 @@ out/
 /config/application-prod.yml
 # generated at run time
 /data/
+.model-cache/

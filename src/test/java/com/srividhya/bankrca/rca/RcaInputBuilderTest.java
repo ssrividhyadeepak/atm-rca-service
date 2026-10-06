@@ -65,7 +65,7 @@ class RcaInputBuilderTest {
         RcaInput input = builder.build(day, Map.of("sig-1", "2026-09-01T00:00:00Z", "sig-57", "2026-09-01T00:00:00Z"));
 
         assertThat(input.id()).isEqualTo("2026-10-02");
-        assertThat(input.schemaVersion()).isEqualTo("1.1");
+        assertThat(input.schemaVersion()).isEqualTo("1.2");
         assertThat(input.correlation().signatures()).hasSize(50);
         assertThat(input.correlation().signatures().get(49).id()).isEqualTo("sig-49");
         assertThat(input.omittedSignatures()).isEqualTo(10);

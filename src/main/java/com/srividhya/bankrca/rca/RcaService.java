@@ -9,8 +9,11 @@ import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
+
 import com.srividhya.bankrca.correlation.CorrelationResult;
 import com.srividhya.bankrca.correlation.CorrelationResult.FailureSignature;
+import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.storage.RcaStore;
 
 /**
@@ -21,16 +24,27 @@ import com.srividhya.bankrca.storage.RcaStore;
 @Service
 public class RcaService {
 
+    private static final int HISTORY_DAYS = 90;
+
     private final RcaAnalyzer analyzer;
     private final RcaInputBuilder inputs;
     private final RcaInputFiles files;
     private final RcaStore store;
+    private final KnowledgeService knowledge;
 
-    public RcaService(RcaAnalyzer analyzer, RcaInputBuilder inputs, RcaInputFiles files, RcaStore store) {
+    public RcaService(RcaAnalyzer analyzer, RcaInputBuilder inputs, RcaInputFiles files, RcaStore store,
+            KnowledgeService knowledge) {
         this.analyzer = analyzer;
         this.inputs = inputs;
         this.files = files;
         this.store = store;
+        this.knowledge = knowledge;
+    }
+
+    /** Reports saved on earlier days (from MongoDB after a restart) become searchable history. */
+    @PostConstruct
+    void loadHistory() {
+        store.reports(HISTORY_DAYS).forEach(knowledge::remember);
     }
 
     public RcaReport analyzeAndSave(CorrelationResult correlation) {
@@ -54,6 +68,7 @@ public class RcaService {
 
         RcaReport report = analyze(input).withInputHash(RcaInputFiles.hash(inputJson));
         store.saveReport(report);
+        knowledge.remember(report);
 
         Map<String, Instant[]> seen = new HashMap<>();
         for (FailureSignature s : correlation.signatures()) {

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import com.srividhya.bankrca.correlation.CorrelationResult;
 import com.srividhya.bankrca.correlation.CorrelationResult.ComponentChain;
+import com.srividhya.bankrca.knowledge.KnowledgeRef;
 import com.srividhya.bankrca.rca.RcaReport.Finding;
 import com.srividhya.bankrca.source.SourceLocation;
 import com.srividhya.bankrca.source.SourceLocation.CommitInfo;
@@ -131,7 +132,7 @@ class RuleBasedRcaAnalyzerTest {
 
     private Finding withSource(String exception, SourceLocation source) {
         CorrelationResult day = day(signature("s1", "pay-p1", exception, "timed out", TIMEOUT_STACK, 64, "BURST", 2, 6, 40));
-        return analyzer.analyze(new RcaInput("2026-10-02", RcaInput.SCHEMA_VERSION, day, Map.of(), Map.of("s1", source), 0))
+        return analyzer.analyze(new RcaInput("2026-10-02", RcaInput.SCHEMA_VERSION, day, Map.of(), Map.of("s1", source), Map.of(), 0))
                 .findings().get(0);
     }
 
@@ -183,6 +184,34 @@ class RuleBasedRcaAnalyzerTest {
         assertThat(f.suspectCommit()).isNull();
         // The location read from the stack trace is still reported
         assertThat(f.location()).isEqualTo("com.acme.host.HostClient.call(HostClient.java:73)");
+    }
+
+    @Test
+    void attachesTheRunbookAndPastRcasThatMatch() {
+        CorrelationResult day = day(signature("s1", "pay-p1", "com.acme.HostTimeoutException", "timed out", TIMEOUT_STACK,
+                64, "BURST", 2, 6, 40));
+        List<KnowledgeRef> refs = List.of(
+                new KnowledgeRef("runbook", "RB-001", "Host timeouts", "EXACT", 1.0, null, "Roll back the timeout change."),
+                new KnowledgeRef("past-rca", "RCA-2026-03-14", "Timeouts after a network change", "EXACT", 1.0,
+                        "2026-03-14", "Root cause: a firewall change. Resolution: rolled back."),
+                new KnowledgeRef("past-rca", "RCA-2026-05-02", "Pool exhausted", "SEMANTIC", 0.62, "2026-05-02",
+                        "Root cause: pool too small. Resolution: rolled back."));
+
+        Finding f = analyzer.analyze(new RcaInput("2026-10-02", RcaInput.SCHEMA_VERSION, day, Map.of(), Map.of(),
+                Map.of("s1", refs), 0)).findings().get(0);
+
+        assertThat(f.rules()).containsExactly("R3-timeout", "R12-runbook", "R13-past-rca");
+        assertThat(f.knowledge()).isEqualTo(refs);
+        assertThat(f.suggestedAction()).endsWith("Runbook RB-001: Roll back the timeout change.");
+        assertThat(f.evidence()).contains(
+                "Runbook RB-001 \"Host timeouts\" (written for this exception)",
+                "Past RCA RCA-2026-03-14 \"Timeouts after a network change\" (written for this exception): "
+                        + "Root cause: a firewall change. Resolution: rolled back.",
+                "Past RCA RCA-2026-05-02 \"Pool exhausted\" (similar wording, score 0.62): Root cause: pool too small. "
+                        + "Resolution: rolled back.");
+        // Without knowledge the same finding has none of this
+        assertThat(only(day).rules()).containsExactly("R3-timeout");
+        assertThat(only(day).knowledge()).isEmpty();
     }
 
     @Test

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Spring Boot's usual console logging, plus the tool-call audit trail in its own file. -->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+    <springProperty name="LOG_DIR" source="rca.log-dir" defaultValue="logs"/>
+
+    <!-- One JSON line per tool call: when, which tool, masked arguments, how long, outcome -->
+    <appender name="AUDIT" class="ch.qos.logback.core.FileAppender">
+        <file>${LOG_DIR}/audit.log</file>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+    <logger name="AUDIT" level="INFO" additivity="false">
+        <appender-ref ref="AUDIT"/>
+    </logger>
+
+    <!-- Logs a line per embedded passage at INFO -->
+    <logger name="org.springframework.ai.vectorstore.SimpleVectorStore" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

@@ -1,10 +1,12 @@
 package com.srividhya.bankrca.rca;
 
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.data.annotation.Id;
 
 import com.srividhya.bankrca.correlation.CorrelationResult;
+import com.srividhya.bankrca.knowledge.KnowledgeRef;
 import com.srividhya.bankrca.source.SourceLocation;
 
 /**
@@ -20,6 +22,7 @@ import com.srividhya.bankrca.source.SourceLocation;
  * @param correlation the grouped failures: signatures, component chains and totals
  * @param knownSince signature id to the time it was first ever seen, for signatures seen before this window
  * @param sources signature id to where its root cause is in the deployed code, for signatures with a stack trace
+ * @param knowledge signature id to the runbook and past RCAs that match it; only signatures with a match are listed
  * @param omittedSignatures signatures left out because the window had more than the cap; the most frequent are kept
  */
 public record RcaInput(
@@ -28,19 +31,26 @@ public record RcaInput(
         CorrelationResult correlation,
         Map<String, String> knownSince,
         Map<String, SourceLocation> sources,
+        Map<String, List<KnowledgeRef>> knowledge,
         int omittedSignatures) {
 
-    /** 1.1 added 'sources'. */
-    public static final String SCHEMA_VERSION = "1.1";
-    /** Versions this service can still read: 1.0 is 1.1 without 'sources'. */
-    public static final java.util.List<String> READABLE_VERSIONS = java.util.List.of("1.0", "1.1");
+    /** 1.1 added 'sources', 1.2 added 'knowledge'. */
+    public static final String SCHEMA_VERSION = "1.2";
+    /** Versions this service can still read: the earlier ones only lack the fields added since. */
+    public static final List<String> READABLE_VERSIONS = List.of("1.0", "1.1", "1.2");
 
     public static RcaInput of(CorrelationResult correlation, Map<String, String> knownSince) {
-        return new RcaInput(correlation.to().substring(0, 10), SCHEMA_VERSION, correlation, knownSince, Map.of(), 0);
+        return new RcaInput(correlation.to().substring(0, 10), SCHEMA_VERSION, correlation, knownSince, Map.of(), Map.of(), 0);
     }
 
     /** The source location of a signature, or null when there is none. */
     public SourceLocation source(String signatureId) {
         return sources == null ? null : sources.get(signatureId);
+    }
+
+    /** The runbook and past RCAs of a signature; empty when there are none. */
+    public List<KnowledgeRef> knowledge(String signatureId) {
+        List<KnowledgeRef> refs = knowledge == null ? null : knowledge.get(signatureId);
+        return refs == null ? List.of() : refs;
     }
 }

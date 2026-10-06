@@ -1,0 +1,226 @@
+[
+  {
+    "id": "R1",
+    "type": "runbook",
+    "note": "exact exception",
+    "query": "withdrawal-p1 HostAuthTimeoutException: host authorization timed out after <n>ms (attempt <n>/<n>)",
+    "expect": "RB-001",
+    "matchedBy": "EXACT"
+  },
+  {
+    "id": "R2",
+    "type": "runbook",
+    "note": "exact exception",
+    "query": "deposit-p1 LedgerPostingException: ledger posting failed status=<n> attempt=<n>",
+    "expect": "RB-002",
+    "matchedBy": "EXACT"
+  },
+  {
+    "id": "R3",
+    "type": "runbook",
+    "note": "exact exception",
+    "query": "deposit-p1 java.lang.NullPointerException: Cannot invoke Envelope.getCurrency() because envelope is null",
+    "expect": "RB-004",
+    "matchedBy": "EXACT"
+  },
+  {
+    "id": "R4",
+    "type": "runbook",
+    "note": "exact exception",
+    "query": "balance-p1 CoreBankingTimeoutException: core banking balance call timed out after <n>ms",
+    "expect": "RB-003",
+    "matchedBy": "EXACT"
+  },
+  {
+    "id": "R5",
+    "type": "runbook",
+    "note": "another exception, same problem",
+    "query": "withdrawal ResourceAccessException: I/O error calling the authorization gateway: Read timed out",
+    "expect": "RB-001",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R6",
+    "type": "runbook",
+    "note": "plain words",
+    "query": "withdrawals are declined and the authorization gateway is slow to respond",
+    "expect": "RB-001",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R7",
+    "type": "runbook",
+    "note": "plain words",
+    "query": "deposit credit was not posted, the ledger returns service unavailable",
+    "expect": "RB-002",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R8",
+    "type": "runbook",
+    "note": "plain words",
+    "query": "balance request to core banking takes too long",
+    "expect": "RB-003",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R9",
+    "type": "runbook",
+    "note": "plain words",
+    "query": "the machine has run out of notes and cannot pay the amount the customer asked for",
+    "expect": "RB-005",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R10",
+    "type": "runbook",
+    "note": "plain words",
+    "query": "the screen shows a customer setup error, undefined",
+    "expect": "RB-006",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R11",
+    "type": "runbook",
+    "note": "a fallback line, no exception class",
+    "query": "balance-p1 In downstreamBalanceFallback with Exception",
+    "expect": "RB-003",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R12",
+    "type": "runbook",
+    "note": "the UI line, no exception class",
+    "query": "ui-base-p1 UI MOD BANK ID:<bankId> CustomerTrackingSessionId:<sessionId> \"CustomerCommSetup: Exception - undefined\"",
+    "expect": "RB-006",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R13",
+    "type": "runbook",
+    "note": "no runbook for this",
+    "query": "OutOfMemoryError: Java heap space in the statement service",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "R14",
+    "type": "runbook",
+    "note": "no runbook for this",
+    "query": "SSLHandshakeException: certificate expired",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "R15",
+    "type": "runbook",
+    "note": "no runbook for this",
+    "query": "the receipt printer is out of paper",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "R16",
+    "type": "runbook",
+    "note": "off topic",
+    "query": "how do I reset my password",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "P1",
+    "type": "past-rca",
+    "note": "exact exception",
+    "query": "withdrawal-p1 HostAuthTimeoutException: host authorization timed out after <n>ms",
+    "expect": "RCA-2026-03-14",
+    "matchedBy": "EXACT"
+  },
+  {
+    "id": "P2",
+    "type": "past-rca",
+    "note": "exact exception",
+    "query": "balance-p1 CoreBankingTimeoutException: core banking balance call timed out",
+    "expect": "RCA-2026-08-21",
+    "matchedBy": "EXACT"
+  },
+  {
+    "id": "P3",
+    "type": "past-rca",
+    "note": "plain words",
+    "query": "withdrawals fail with connection pool exhausted right after a configuration deployment",
+    "expect": "RCA-2026-05-02",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "P4",
+    "type": "past-rca",
+    "note": "plain words",
+    "query": "ledger maintenance ran long and deposit postings were refused",
+    "expect": "RCA-2026-06-18",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "P5",
+    "type": "past-rca",
+    "note": "plain words",
+    "query": "a firewall change added latency to the authorization gateway",
+    "expect": "RCA-2026-03-14",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "P6",
+    "type": "past-rca",
+    "note": "plain words",
+    "query": "balance inquiries slow while a batch job was running",
+    "expect": "RCA-2026-08-21",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "P7",
+    "type": "past-rca",
+    "note": "nothing like it before",
+    "query": "the log volume filled the disk",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "P8",
+    "type": "past-rca",
+    "note": "nothing like it before",
+    "query": "SSLHandshakeException: certificate expired",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "P9",
+    "type": "past-rca",
+    "note": "real signature with no past RCA: must not borrow one from another problem",
+    "query": "withdrawal-p1 com.example.bank.withdrawal.cash.InsufficientCassetteException attached exception: com.example.bank.withdrawal.cash.InsufficientCassetteException: cassette <n> cannot dispense amount=<n>",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "P10",
+    "type": "past-rca",
+    "note": "real signature, UI line: nothing like it before",
+    "query": "ui-base-p1 UI MOD BANK ID:<bankId> Timestamp: <n>-<n>-<n>T<n>:<n>:<n>.<n>Z CustomerTrackingSessionId:<sessionId> \"CustomerCommSetup: Exception - undefined\"",
+    "expect": null,
+    "matchedBy": null
+  },
+  {
+    "id": "P11",
+    "type": "past-rca",
+    "note": "real signature, fallback line: the core banking RCA",
+    "query": "balance-p1 In downstreamBalanceFallback with Exception",
+    "expect": "RCA-2026-08-21",
+    "matchedBy": "SEMANTIC"
+  },
+  {
+    "id": "R17",
+    "type": "runbook",
+    "note": "hard paraphrase with none of the runbook's words",
+    "query": "customers cannot take out cash, the card issuer check is too slow",
+    "expect": "RB-001",
+    "matchedBy": "SEMANTIC"
+  }
+]
