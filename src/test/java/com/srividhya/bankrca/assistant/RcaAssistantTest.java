@@ -120,6 +120,55 @@ class RcaAssistantTest {
     }
 
     @Test
+    void anAnswerThatCitesWhatNoToolReturnedIsReplacedByThePlainOne() {
+        monitoring.run("MANUAL");
+        AtomicInteger round = new AtomicInteger();
+        ChatModel inventive = prompt -> round.incrementAndGet() == 1
+                ? toolCall("lookupRunbook", "{\"query\":\"HostAuthTimeoutException\",\"limit\":1}")
+                : text("Follow runbook RB-042 and revert commit deadbeef12 in HostAuthClientImpl.java:99; "
+                        + "the cause is a KafkaTimeoutException.");
+
+        Answer answer = new RcaAssistant(inventive, tools, new PiiMasker()).ask("How do I fix HostAuthTimeoutException?");
+
+        assertThat(answer.grounded()).isFalse();
+        assertThat(answer.withheld()).containsExactlyInAnyOrder("RB-042", "deadbeef12", "HostAuthClientImpl.java:99",
+                "KafkaTimeoutException");
+        // What goes out is built from the tool result, not from the model's text
+        assertThat(answer.answer()).startsWith("Runbook RB-001, \"Host authorization timeouts on withdrawals\":")
+                .doesNotContain("RB-042").doesNotContain("deadbeef12");
+        assertThat(answer.complete()).isTrue();
+    }
+
+    @Test
+    void anAnswerThatCitesOnlyWhatTheToolsReturnedGoesOutAsWritten() {
+        monitoring.run("MANUAL");
+        AtomicInteger round = new AtomicInteger();
+        String written = "Start with runbook RB-001: HostAuthTimeoutException usually means the timeout setting was lowered.";
+        ChatModel careful = prompt -> round.incrementAndGet() == 1
+                ? toolCall("lookupRunbook", "{\"query\":\"HostAuthTimeoutException\",\"limit\":1}") : text(written);
+
+        Answer answer = new RcaAssistant(careful, tools, new PiiMasker()).ask("How do I fix HostAuthTimeoutException?");
+
+        assertThat(answer.grounded()).isTrue();
+        assertThat(answer.withheld()).isEmpty();
+        assertThat(answer.answer()).isEqualTo(written);
+    }
+
+    @Test
+    void anAnswerWithNoToolBehindItIsNotPassedOnWhenItCitesSomething() {
+        ChatModel fromMemory = prompt -> text("That is the well-known NullPointerException in Ledger.java:10; see RCA-2020-01-01.");
+
+        Answer answer = new RcaAssistant(fromMemory, tools, new PiiMasker()).ask("What is wrong?");
+
+        assertThat(answer.grounded()).isFalse();
+        assertThat(answer.answer()).startsWith("I cannot check that answer against the tools");
+        assertThat(answer.withheld()).contains("RCA-2020-01-01", "Ledger.java:10", "NullPointerException");
+        // An exception named in the question itself may be repeated
+        assertThat(new RcaAssistant(prompt -> text("NullPointerException means a null was dereferenced."), tools,
+                new PiiMasker()).ask("What is a NullPointerException?").grounded()).isTrue();
+    }
+
+    @Test
     void theScriptedModelPicksToolsByKeywordsAndReportsAToolThatCouldNotAnswer() {
         monitoring.run("MANUAL");
         RcaAssistant assistant = new RcaAssistant(new ScriptedChatModel(), tools, new PiiMasker());

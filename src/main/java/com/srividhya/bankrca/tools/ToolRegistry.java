@@ -13,6 +13,9 @@ import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.ai.util.json.schema.JsonSchemaGenerator;
 import org.springframework.stereotype.Component;
 
+import com.srividhya.bankrca.security.Caller.DeniedException;
+import com.srividhya.bankrca.security.Caller.RateLimitedException;
+
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -77,6 +80,8 @@ public class ToolRegistry {
      * @return the tool's result as JSON
      * @throws UnknownToolException when there is no such tool
      * @throws ToolRejectedException when the arguments are not acceptable
+     * @throws DeniedException when the caller's token lacks the tool's scope
+     * @throws RateLimitedException when the caller is over its allowance for the tool
      */
     public String invoke(String name, String argumentsJson) {
         ToolCallback callback = callbacks.stream().filter(c -> c.getToolDefinition().name().equals(name)).findFirst()
@@ -95,6 +100,9 @@ public class ToolRegistry {
         } catch (RuntimeException e) {
             // A refusal by the tool, or arguments of the wrong type that never reached it
             for (Throwable t = e; t != null; t = t.getCause()) {
+                if (t instanceof DeniedException || t instanceof RateLimitedException) {
+                    throw (RuntimeException) t;
+                }
                 if (t instanceof IllegalArgumentException && t.getMessage() != null && t.getMessage().startsWith("'")) {
                     throw new ToolRejectedException(t.getMessage());
                 }

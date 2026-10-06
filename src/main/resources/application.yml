@@ -13,6 +13,11 @@ spring:
   main:
     banner-mode: off
 
+logging:
+  pattern:
+    # The request's trace id on every log line
+    correlation: "[%X{traceId:-}] "
+
 server:
   # Local only by default
   address: ${RCA_BIND_ADDRESS:127.0.0.1}
@@ -58,6 +63,25 @@ rca:
         transaction: ui
       - pattern: "gateway-*"
         transaction: gateway
+  security:
+    # off  = no tokens; only allowed here, on this machine, without the prod profile
+    # dev  = bearer tokens signed with a local key: ./gradlew -q devToken
+    # jwt  = bearer tokens from your identity provider; the prod profile always uses this
+    mode: ${RCA_SECURITY_MODE:off}
+    # jwt: the identity provider that issues the tokens, e.g. https://login.example.com/realms/bank
+    issuer-uri: ${RCA_ISSUER_URI:}
+    # The "aud" a token must carry to be meant for this service
+    audience: bank-rca-service
+    resource-url: ${RCA_RESOURCE_URL:http://localhost:${server.port}}
+    dev-keys-dir: ${RCA_DEV_KEYS_DIR:data/dev-keys}
+  rate-limit:
+    # Calls per minute, per client
+    default-per-minute: 120
+    # Calls that run a Splunk search: failures, correlation, a monitoring run, an analysis
+    search-per-minute: 12
+    assistant-per-minute: 20
+    # Calls of one tool, whoever makes them
+    tool-per-minute: 60
   # Where logs/audit.log, the record of every tool call, is written
   log-dir: ${RCA_LOG_DIR:logs}
   # Where each day's analyzer input is written: daily-rca-input-<day>.json, and the latest
@@ -138,8 +162,17 @@ spring:
     activate:
       on-profile: prod
 
+management:
+  endpoint:
+    health:
+      # Status only: the details name hosts and paths
+      show-details: never
+      show-components: never
+
 rca:
   storage: mongo
+  security:
+    mode: jwt
   splunk:
     mode: live
   source:

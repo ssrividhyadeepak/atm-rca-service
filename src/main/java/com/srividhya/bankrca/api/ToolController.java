@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.srividhya.bankrca.security.Caller.DeniedException;
+import com.srividhya.bankrca.security.Caller.RateLimitedException;
 import com.srividhya.bankrca.tools.ToolRegistry;
 import com.srividhya.bankrca.tools.ToolRegistry.ToolInfo;
 import com.srividhya.bankrca.tools.ToolRegistry.ToolRejectedException;
@@ -50,6 +52,17 @@ public class ToolController {
     @ExceptionHandler(ToolRejectedException.class)
     public ResponseEntity<Map<String, String>> rejected(ToolRejectedException e) {
         return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(DeniedException.class)
+    public ResponseEntity<Map<String, String>> denied(DeniedException e) {
+        return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(RateLimitedException.class)
+    public ResponseEntity<Map<String, String>> rateLimited(RateLimitedException e) {
+        return ResponseEntity.status(429).header("Retry-After", String.valueOf(e.retryAfterSeconds()))
+                .body(Map.of("error", e.getMessage()));
     }
 
     /** Anything else is the tool's own failure: logged with the call id by ToolAudit, not echoed to the caller. */

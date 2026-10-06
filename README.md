@@ -11,6 +11,7 @@ report and drafts an incident for approval. Built in ten runnable steps; see the
 | Failed transactions | A synthetic day of bank failures | Your Splunk, from `SPLUNK_URL` |
 | Application code | Sample source in a JSON file | Your git repositories, from `GIT_REMOTE_URL` |
 | Runbooks and past RCAs | Samples in `config/knowledge/` | Your folder, from `RCA_KNOWLEDGE_DIR`, plus every report the service saves |
+| Who may call | Anyone on this machine; no tokens | Bearer tokens from your identity provider, from `RCA_ISSUER_URI` |
 | Outside connections | None | Each one configured by environment variables |
 
 The service prints its mode and connections when it starts. With the prod profile it refuses
@@ -97,7 +98,7 @@ Stop with Ctrl+C.
 ## Run in the enterprise environment
 
 1. Copy `config/prod.env.example` to `config/prod.env` and set `MONGODB_URI`, `SPLUNK_URL`,
-   `SPLUNK_USERNAME` and `GIT_REMOTE_URL`.
+   `SPLUNK_USERNAME`, `GIT_REMOTE_URL` and `RCA_ISSUER_URI`.
 2. Copy `config/application-prod.example.yml` to `config/application-prod.yml` and set your
    Kubernetes namespace and the containers to monitor, with a transaction label for each.
 3. Load the settings, type your Splunk password (it is not echoed or saved), and start
@@ -136,6 +137,8 @@ followed by the first monitoring run with the number of failed transactions it r
 | `GIT_TOKEN`, `GIT_USERNAME` | for private remotes | Read-only access token and the username the git host expects |
 | `RCA_DEPLOYED_REF` | no (`main`) | Branch, tag or commit production runs |
 | `RCA_REPO_DIR` | instead of a remote | An existing clone to read |
+| `RCA_ISSUER_URI` | yes | Identity provider that issues the bearer tokens |
+| `RCA_RESOURCE_URL` | when behind a proxy | Public URL of this service |
 | `RCA_NAMESPACE` | no (`prod`) | Kubernetes namespace whose events are searched |
 | `RCA_INPUT_DIR` | no (`data/rca-input`) | Where the daily RCA input files are written |
 | `RCA_LOG_DIR` | no (`logs`) | Where `audit.log`, the record of every tool call, is written |
@@ -283,6 +286,61 @@ nothing else changes. The loop stops a model that keeps calling tools after four
 masks the question, and sends the model the system prompt in
 `src/main/resources/prompts/rca-assistant.md`.
 
+### Security, rate limits and audit
+
+`rca.security.mode` (or `RCA_SECURITY_MODE`) decides who may call:
+
+| Mode | Meaning |
+|---|---|
+| `off` | No tokens. The local default. Refused with the prod profile, and refused if the service listens on anything but this machine |
+| `dev` | Every request needs a bearer token signed with a local key: `./gradlew -q devToken` |
+| `jwt` | Every request needs a bearer token from your identity provider (`RCA_ISSUER_URI`). The prod profile always uses this |
+
+With `dev` and `jwt` the token's signature, expiry, issuer and audience
+(`bank-rca-service`) are checked, and each endpoint and each tool needs a scope:
+
+| Scope | Opens |
+|---|---|
+| `rca:read` | Reports, the RCA input, runs, correlation; the `getFailureSummary` and `getFinding` tools |
+| `rca:write` | Starting a run or an analysis, replaying an input, reloading the knowledge base |
+| `logs:read` | `/api/failures`: the failure events themselves |
+| `kb:read` | Knowledge search; the `lookupRunbook` and `searchHistoricalRca` tools |
+| `code:read` | `/api/source/locate` |
+
+Listing tools and asking the assistant need any valid token; the assistant then acts with
+the caller's scopes, so a tool the caller may not use is refused to the assistant too.
+`/actuator/health` needs no token and, in prod, gives the status only.
+
+To try it locally:
+
+```bash
+RCA_SECURITY_MODE=dev java -jar build/libs/bank-rca-service.jar
+```
+
+```bash
+export RCA_TOKEN=$(./gradlew -q devToken)
+curl -s -H "Authorization: Bearer $RCA_TOKEN" http://localhost:8090/api/rca/latest.md
+```
+
+That token is read-only and lasts 8 hours. For one that may also start runs:
+`./gradlew -q devToken --args="me 'rca:read rca:write logs:read kb:read code:read' 8"`.
+
+- **Rate limits**, per client per minute: 12 for calls that run a Splunk search, 20 for
+  assistant questions, 60 for any one tool, 120 for everything else. Over the limit the
+  answer is 429 with `Retry-After`. Set under `rca.rate-limit`.
+- **Trace ids:** each request gets one, taken from a W3C `traceparent` header when the
+  caller sends it. It is returned as `X-Trace-Id`, and is on every log line and audit entry
+  of that request.
+- **Audit:** `logs/audit.log` has one JSON line per tool call with the client, trace id,
+  tool, masked arguments, duration and outcome: `OK`, `REJECTED` (bad arguments), `DENIED`
+  (missing scope), `RATE_LIMITED` or `ERROR`.
+- **Assistant guardrails:** the question is length-limited and masked; only the registered
+  read-only tools can be called; a model is stopped after four rounds of tool calls; and
+  its answer goes out only if every runbook id, RCA id, commit, file, exception name and
+  trace id in it came from a tool result or the question. Otherwise the plain answer built
+  from the tool results is returned in its place, with `grounded: false` and the made-up
+  references listed under `withheld`.
+
 ### The daily RCA input
 
 Before the analyzer runs, everything it is allowed to see is written to one file,
@@ -369,7 +427,8 @@ to. Two things decide whether your username and password work there:
 curl -s -u YOUR_USER_ID "https://splunk.example.com:8089/services/server/info?output_mode=json" | head -c 300
 ```
 
-The API has no authentication yet (Day 9), which is why it listens on localhost only.
+Locally the API needs no token, which is why it listens on localhost only; see "Security,
+rate limits and audit" below.
 `/api/failures` returns log content: card numbers, account numbers and emails are masked,
 by three patterns that were not written against your log formats.
 
@@ -394,5 +453,5 @@ that is not possible.
 | 6 | RAG over runbooks and past RCAs | done |
 | 7 | Tools a model can call, with a scripted stand-in for the model | done |
 | 8 | MCP server exposing the tools | |
-| 9 | Enterprise controls: authN/Z, rate limiting, validation, guardrails, audit | |
+| 9 | Enterprise controls: authN/Z, rate limiting, validation, guardrails, audit | done |
 | 10 | Incident workflow: RCA, incident draft, approval, mock incident | |

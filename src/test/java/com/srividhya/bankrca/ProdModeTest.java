@@ -8,6 +8,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -21,6 +22,9 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import com.srividhya.bankrca.monitor.MonitoringJob;
+import com.srividhya.bankrca.security.DevKeys;
+import com.srividhya.bankrca.security.DevTokens;
+import com.srividhya.bankrca.security.Scopes;
 import com.srividhya.bankrca.source.TestRepo;
 import com.srividhya.bankrca.storage.MongoRunStore;
 import com.srividhya.bankrca.storage.RunStore;
@@ -44,6 +48,7 @@ class ProdModeTest {
 
     private static TransitionWalker.ReachedState<RunningMongodProcess> mongod;
     private static final FakeSplunk SPLUNK = new FakeSplunk();
+    private static final FakeIdentityProvider IDP = new FakeIdentityProvider();
     /** Two raw events as Splunk returns them: the event JSON as a string in _raw. */
     private static final String TWO_FAILURES = "{\"results\":[" + result("1790860412.337", "withdrawal-p1",
             "2026-10-01T06:13:32,337-07:00 -- LEVEL: ERROR com.bank.host.HostClient 928202595 -[exec-6] "
@@ -84,6 +89,9 @@ class ProdModeTest {
         if (mongod == null) {
             try {
                 mongod = Mongod.instance().start(Version.Main.V7_0);
+                // The Spring context that uses it is cached until the test JVM exits, so that is
+                // when it is stopped. Without this every test run leaves a mongod process behind.
+                Runtime.getRuntime().addShutdownHook(new Thread(mongod::close));
             } catch (Throwable e) {
                 System.out.println("ProdModeTest: could not start mongod: " + e);
                 return false;
@@ -101,6 +109,8 @@ class ProdModeTest {
         registry.add("rca.splunk.token", () -> "splunk-token-for-test");
         registry.add("rca.splunk.index", () -> "bank_app");
         registry.add("rca.monitor.run-on-startup", () -> "false");
+        // Who may call: tokens from the (stand-in) identity provider
+        registry.add("rca.security.issuer-uri", IDP::issuer);
         // The application code: a real git repository, standing in for the remote
         registry.add("rca.source.remote-url", () -> gitRemote().toString());
         registry.add("rca.source.repos-dir", () -> gitRemote().resolveSibling("mirrors").toString());
@@ -170,10 +180,11 @@ class ProdModeTest {
         assertThat(stored.getInteger("failedTransactions")).isEqualTo(2);
         assertThat(stored.getList("byTransaction", org.bson.Document.class)).hasSize(2);
 
-        JsonNode health = json.readTree(get("/actuator/health").body());
-        assertThat(health.get("status").asString()).isEqualTo("UP");
-        assertThat(health.get("components").get("storage").get("details").get("store").asString())
-                .isEqualTo("MongoDB database bank_rca_prodtest");
+        // Health is open to anyone in prod, so it gives the status and nothing else
+        HttpResponse<String> health = http.send(HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/actuator/health")).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(json.readTree(health.body()).get("status").asString()).isEqualTo("UP");
+        assertThat(health.body()).doesNotContain("components").doesNotContain("details").doesNotContain("bank_rca_prodtest");
     }
 
     @Test
@@ -213,8 +224,8 @@ class ProdModeTest {
         assertThat(store.latest(1).get(0).trigger()).isEqualTo("SCHEDULED");
         HttpResponse<String> health = get("/actuator/health");
         assertThat(health.statusCode()).isEqualTo(503);
-        assertThat(json.readTree(health.body()).get("components").get("monitoring").get("status").asString())
-                .isEqualTo("DOWN");
+        assertThat(json.readTree(health.body()).get("status").asString()).isEqualTo("DOWN");
+        assertThat(health.body()).doesNotContain("components").doesNotContain("503");
 
         // ...and recovers with the next good run
         SPLUNK.status = 200;
@@ -223,13 +234,52 @@ class ProdModeTest {
         assertThat(get("/actuator/health").statusCode()).isEqualTo(200);
     }
 
+    @Test
+    void acceptsOnlyTokensFromTheIdentityProviderAndOnlyForTheirScopes() throws Exception {
+        SPLUNK.status = 200;
+        SPLUNK.response = TWO_FAILURES;
+
+        // No token, a token signed by someone else, a token without the scope
+        assertThat(send("GET", "/api/runs", null).statusCode()).isEqualTo(401);
+        String devSigned = DevTokens.mint(DevKeys.loadOrCreate(Path.of("build/test-data/dev-keys-prodtest")),
+                IDP.issuer(), "intruder", Scopes.READ_ONLY, DevTokens.AUDIENCE, Duration.ofMinutes(5));
+        assertThat(send("GET", "/api/runs", devSigned).statusCode()).as("signed with another key").isEqualTo(401);
+        assertThat(send("GET", "/api/failures", IDP.token("reader", "rca:read")).statusCode()).isEqualTo(403);
+        assertThat(send("POST", "/api/runs", IDP.token("reader", Scopes.READ_ONLY)).statusCode()).isEqualTo(403);
+
+        assertThat(send("GET", "/api/runs", IDP.token("reader", "rca:read")).statusCode()).isEqualTo(200);
+        assertThat(send("GET", "/api/failures", IDP.token("log-reader", "logs:read")).statusCode()).isEqualTo(200);
+
+        // The metadata tells a client which identity provider to go to
+        HttpResponse<String> metadata = send("GET", "/.well-known/oauth-protected-resource", null);
+        assertThat(json.readTree(metadata.body()).get("authorization_servers").get(0).asString()).isEqualTo(IDP.issuer());
+    }
+
+    private HttpResponse<String> send(String method, String path, String token) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .method(method, HttpRequest.BodyPublishers.noBody());
+        if (token != null) {
+            b.header("Authorization", "Bearer " + token);
+        }
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Every other call in this class is made as a client that holds all the scopes. */
+    private static String all() {
+        return IDP.token("test-client", String.join(" ", Scopes.ALL));
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
+        if (!path.startsWith("/actuator")) {
+            return send("GET", path, all());
+        }
         return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> post(String path) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .header("Authorization", "Bearer " + all())
                 .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
     }
 }

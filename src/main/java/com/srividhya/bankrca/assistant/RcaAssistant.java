@@ -11,6 +11,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage.ToolCall;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -28,7 +30,8 @@ import com.srividhya.bankrca.tools.ToolRegistry;
  * Answers a question about the failures by letting a chat model call the RCA tools. The loop
  * is run here, not inside the model: the model is asked, any tool calls it makes are executed
  * by Spring AI's ToolCallingManager, the results go back to the model, and so on until it
- * answers in text or the round limit is reached. Keeping the loop here means the same code
+ * answers in text or the round limit is reached. The final answer is checked against the tool
+ * results before it goes out (AnswerGuard). Keeping the loop here means the same code
  * works with any ChatModel, and that every tool call is visible in the result.
  */
 @Service
@@ -38,8 +41,11 @@ public class RcaAssistant {
      * @param model which model answered
      * @param toolCalls the tools the model called, in order, with the arguments it chose
      * @param complete false when the round limit was reached before the model gave a final answer
+     * @param grounded false when the model's answer cited something no tool returned; the answer
+     *        is then the plain one built from the tool results, and withheld lists what was made up
      */
-    public record Answer(String answer, String model, List<ToolUse> toolCalls, boolean complete) {
+    public record Answer(String answer, String model, List<ToolUse> toolCalls, boolean complete, boolean grounded,
+            List<String> withheld) {
     }
 
     public record ToolUse(String tool, String arguments) {
@@ -81,23 +87,48 @@ public class RcaAssistant {
         // The model executes nothing itself: it is told which tools exist, and its tool calls come back to this loop
         ToolCallingChatOptions options = (ToolCallingChatOptions) ToolCallingChatOptions.builder()
                 .toolCallbacks(tools.callbacks()).build();
-        List<Message> messages = List.of(new SystemMessage(systemPrompt), new UserMessage(masker.mask(question.strip())));
+        String asked = masker.mask(question.strip());
+        List<Message> messages = List.of(new SystemMessage(systemPrompt), new UserMessage(asked));
         List<ToolUse> used = new ArrayList<>();
+        List<ToolResponse> results = new ArrayList<>();
 
         for (int round = 1; round <= MAX_ROUNDS; round++) {
             Prompt prompt = new Prompt(messages, options);
             ChatResponse response = model.call(prompt);
             if (!response.hasToolCalls()) {
-                return new Answer(response.getResult().getOutput().getText(), modelName(), used, true);
+                return checked(response.getResult().getOutput().getText(), asked, used, results);
             }
             for (ToolCall call : response.getResult().getOutput().getToolCalls()) {
                 used.add(new ToolUse(call.name(), call.arguments()));
             }
             ToolExecutionResult executed = toolCalling.executeToolCalls(prompt, response);
             messages = executed.conversationHistory();
+            if (messages.get(messages.size() - 1) instanceof ToolResponseMessage answered) {
+                results.addAll(answered.getResponses());
+            }
         }
         log.warn("The model was still calling tools after {} rounds; stopped", MAX_ROUNDS);
         return new Answer("I could not finish answering: the question needed more tool calls than allowed.", modelName(),
-                used, false);
+                used, false, true, List.of());
+    }
+
+    /**
+     * The model's answer goes out only if everything it cites came from a tool or the
+     * question. Otherwise the plain answer built from the tool results is given instead:
+     * less fluent, but true to what the tools returned.
+     */
+    private Answer checked(String modelAnswer, String question, List<ToolUse> used, List<ToolResponse> results) {
+        List<String> ungrounded = AnswerGuard.ungrounded(modelAnswer, question,
+                results.stream().map(ToolResponse::responseData).toList());
+        if (ungrounded.isEmpty()) {
+            return new Answer(masker.mask(modelAnswer), modelName(), used, true, true, List.of());
+        }
+        log.warn("The model's answer cited {} which no tool returned; replaced with the answer built from the tool results",
+                ungrounded);
+        String fallback = results.isEmpty()
+                ? "I cannot check that answer against the tools, so I am not passing it on. Ask about the failures, "
+                        + "a finding, a runbook or past RCAs."
+                : ToolAnswerTemplates.render(results);
+        return new Answer(masker.mask(fallback), modelName(), used, true, false, ungrounded);
     }
 }

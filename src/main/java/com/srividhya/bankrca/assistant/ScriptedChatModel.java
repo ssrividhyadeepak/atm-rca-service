@@ -16,8 +16,6 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -55,7 +53,7 @@ public class ScriptedChatModel implements ChatModel {
         }
         AssistantMessage reply = results.isEmpty()
                 ? AssistantMessage.builder().content("").toolCalls(plan(question)).build()
-                : new AssistantMessage(answer(results));
+                : new AssistantMessage(ToolAnswerTemplates.render(results));
         return new ChatResponse(List.of(new Generation(reply)));
     }
 
@@ -84,50 +82,5 @@ public class ScriptedChatModel implements ChatModel {
 
     private static ToolCall call(String name, String arguments) {
         return new ToolCall("call-" + name, "function", name, arguments);
-    }
-
-    private String answer(List<ToolResponse> results) {
-        List<String> parts = new ArrayList<>();
-        for (ToolResponse r : results) {
-            JsonNode data;
-            try {
-                data = json.readTree(r.responseData());
-            } catch (JacksonException e) {
-                data = null;
-            }
-            if (data == null || !data.isObject()) {
-                // Not a result: the tool's refusal or failure, passed back as text
-                parts.add(r.name() + " could not answer: " + r.responseData());
-            } else if (r.name().equals("getFailureSummary")) {
-                StringBuilder sb = new StringBuilder(data.get("headline").asString());
-                for (JsonNode f : data.get("findings")) {
-                    if (f.get("rank").asInt() <= 3) {
-                        sb.append(' ').append(f.get("rank").asInt()).append(". ").append(f.get("severity").asString())
-                                .append(' ').append(f.get("problem").asString()).append(" in ")
-                                .append(f.get("component").asString()).append(" (").append(f.get("count").asInt())
-                                .append(" events, ").append(f.get("timePattern").asString()).append(").");
-                    }
-                }
-                parts.add(sb.toString());
-            } else if (r.name().equals("getFinding")) {
-                parts.add("Finding " + data.get("rank").asInt() + ", " + data.get("title").asString() + " ("
-                        + data.get("severity").asString() + ", confidence " + data.get("confidence").asString()
-                        + "). Likely cause: " + data.get("likelyCause").asString() + " Next step: "
-                        + data.get("suggestedAction").asString());
-            } else {
-                boolean runbook = r.name().equals("lookupRunbook");
-                if (data.get("verdict").asString().equals("NO_MATCH")) {
-                    parts.add(runbook ? "There is no runbook for this." : "Nothing similar is on record.");
-                } else {
-                    for (JsonNode h : data.get("hits")) {
-                        if (h.get("related").asBoolean()) {
-                            parts.add((runbook ? "Runbook " : "Past RCA ") + h.get("id").asString() + ", \""
-                                    + h.get("title").asString() + "\": " + h.get("summary").asString());
-                        }
-                    }
-                }
-            }
-        }
-        return String.join(" ", parts);
     }
 }

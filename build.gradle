@@ -32,6 +32,8 @@ dependencies {
     implementation 'org.springframework.ai:spring-ai-vector-store'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    // Validates the bearer token (JWT) on every request when rca.security.mode is dev or jwt
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     // MongoDB through Spring Data's MongoTemplate. The client is created only when
     // rca.storage=mongo (see MongoStorageConfig), so local runs never try to connect.
     implementation 'org.springframework.data:spring-data-mongodb'
@@ -72,4 +74,13 @@ tasks.named('bootJar') {
 
 tasks.withType(Test).configureEach {
     jvmArgs '--enable-native-access=ALL-UNNAMED'
+}
+
+// Prints a bearer token for rca.security.mode=dev: ./gradlew -q devToken
+// Optional: --args="<client> '<scopes>' <hours>"
+tasks.register('devToken', JavaExec) {
+    group = 'application'
+    description = 'Mints a locally signed token for the dev security mode.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.srividhya.bankrca.security.DevTokens'
 }

@@ -1,5 +1,11 @@
 # Tests start runs themselves; the schedule stays off
 rca:
+  rate-limit:
+    # Tests make many calls in a second; SecurityTest sets its own limits
+    default-per-minute: 100000
+    search-per-minute: 100000
+    assistant-per-minute: 100000
+    tool-per-minute: 100000
   log-dir: build/test-data/logs
   knowledge:
     # Fast and model-free; KnowledgeEvalTest covers the embedding mode

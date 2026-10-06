@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import com.srividhya.bankrca.assistant.RcaAssistant;
 import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.monitor.MonitoringService;
+import com.srividhya.bankrca.security.SecurityProps;
 import com.srividhya.bankrca.source.SourceRepository;
 import com.srividhya.bankrca.splunk.SplunkClient;
 import com.srividhya.bankrca.storage.RunStore;
@@ -29,11 +30,13 @@ public class StartupSummary implements ApplicationRunner {
     private final SourceRepository source;
     private final KnowledgeService knowledge;
     private final RcaAssistant assistant;
+    private final SecurityProps security;
 
     public StartupSummary(Environment env, RcaProperties props, RunStore store, SplunkClient splunk,
             MonitoringService monitoring, SourceRepository source, KnowledgeService knowledge,
-            RcaAssistant assistant) {
+            RcaAssistant assistant, SecurityProps security) {
         this.assistant = assistant;
+        this.security = security;
         this.source = source;
         this.knowledge = knowledge;
         this.env = env;
@@ -58,6 +61,9 @@ public class StartupSummary implements ApplicationRunner {
                 props.monitor().window().toHours());
         log.info("Schedule: {}", props.monitor().enabled() ? "monitoring run on cron '" + props.monitor().cron()
                 + "' (UTC)" : "off");
+        log.info("Security: {}", security.off() ? "OFF - no tokens needed; this machine only"
+                : "dev".equalsIgnoreCase(security.mode()) ? "bearer tokens signed with the local dev key: ./gradlew -q devToken"
+                        : "bearer tokens from " + security.issuerUri());
         log.info("Health:   {}/actuator/health", base);
         log.info("Runs:     {}/api/runs", base);
         log.info("Failures: {}/api/failures", base);

@@ -3,6 +3,7 @@ package com.srividhya.bankrca.tools;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -13,6 +14,7 @@ import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.rca.RcaReport;
 import com.srividhya.bankrca.rca.RcaReport.Finding;
 import com.srividhya.bankrca.rca.RcaService;
+import com.srividhya.bankrca.security.Scopes;
 
 /**
  * The functions an assistant may call. Design rules:
@@ -20,6 +22,7 @@ import com.srividhya.bankrca.rca.RcaService;
  * - all are read-only and return data that is already masked
  * - arguments are validated; a refusal says what to send instead, so the model can correct itself
  * - results are capped in size
+ * - each needs a scope, which the caller's token must carry
  * - every call goes through ToolAudit
  */
 @Component
@@ -62,7 +65,7 @@ public class RcaTools {
             exception or problem, event count, time pattern, a suspect commit and the matching
             runbook when there are any. Start here. Use getFinding with a rank for the details.""")
     public FailureSummary getFailureSummary() {
-        return audit.run("getFailureSummary", Map.of(), () -> {
+        return audit.run("getFailureSummary", Set.of(Scopes.RCA_READ), Map.of(), () -> {
             RcaReport r = latest();
             List<FindingSummary> findings = r.findings().stream()
                     .map(f -> new FindingSummary(f.rank(), f.severity(), f.status(), f.category(), f.component(),
@@ -83,7 +86,7 @@ public class RcaTools {
             Take the rank from getFailureSummary.""")
     public Finding getFinding(
             @ToolParam(description = "Rank of the finding in the latest analysis, starting at 1") Integer rank) {
-        return audit.run("getFinding", args("rank", rank), () -> {
+        return audit.run("getFinding", Set.of(Scopes.RCA_READ), args("rank", rank), () -> {
             RcaReport r = latest();
             if (rank == null || rank < 1 || rank > r.findings().size()) {
                 throw new IllegalArgumentException("'rank' must be between 1 and " + r.findings().size()
@@ -102,7 +105,7 @@ public class RcaTools {
     public KnowledgeSearchResult lookupRunbook(
             @ToolParam(description = "Exception class name or a description of the problem, at most 500 characters") String query,
             @ToolParam(required = false, description = "How many runbooks to return, 1 to 5 (default 3)") Integer limit) {
-        return audit.run("lookupRunbook", args("query", query, "limit", limit),
+        return audit.run("lookupRunbook", Set.of(Scopes.KB_READ), args("query", query, "limit", limit),
                 () -> search(query, limit, KnowledgeService.RUNBOOK));
     }
 
@@ -115,7 +118,7 @@ public class RcaTools {
     public KnowledgeSearchResult searchHistoricalRca(
             @ToolParam(description = "Exception class name or a description of the failure, at most 500 characters") String query,
             @ToolParam(required = false, description = "How many past RCAs to return, 1 to 5 (default 3)") Integer limit) {
-        return audit.run("searchHistoricalRca", args("query", query, "limit", limit),
+        return audit.run("searchHistoricalRca", Set.of(Scopes.KB_READ), args("query", query, "limit", limit),
                 () -> search(query, limit, KnowledgeService.PAST_RCA));
     }
 
