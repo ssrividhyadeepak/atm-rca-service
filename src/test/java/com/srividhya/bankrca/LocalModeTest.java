@@ -384,8 +384,8 @@ class LocalModeTest {
         JsonNode tools = json.readTree(get("/api/tools").body());
 
         assertThat(tools).extracting(t -> t.get("name").asString())
-                .containsExactly("getFailureSummary", "getFinding", "lookupRunbook", "searchHistoricalRca");
-        JsonNode lookup = tools.get(2);
+                .containsExactly("draftIncident", "getFailureSummary", "getFinding", "lookupRunbook", "searchHistoricalRca");
+        JsonNode lookup = tools.get(3);
         assertThat(lookup.get("description").asString()).startsWith("Find the runbook for a problem.").contains("NO_MATCH");
         // Input schema, generated from the method signature: what a model is given to fill in
         assertThat(lookup.get("inputSchema").get("type").asString()).isEqualTo("object");
@@ -395,8 +395,11 @@ class LocalModeTest {
         assertThat(lookup.get("inputSchema").get("properties").get("limit").get("type").asString()).isEqualTo("integer");
         assertThat(lookup.get("inputSchema").get("required").toString()).isEqualTo("[\"query\"]");
         assertThat(lookup.get("outputSchema").get("properties").has("verdict")).isTrue();
-        assertThat(tools.get(1).get("inputSchema").get("required").toString()).isEqualTo("[\"rank\"]");
+        assertThat(tools.get(2).get("inputSchema").get("required").toString()).isEqualTo("[\"rank\"]");
         assertThat(tools.get(0).get("stats").has("calls")).isTrue();
+        // The one tool that changes anything says what it does not do
+        assertThat(tools.get(0).get("description").asString()).contains("only creates a draft")
+                .contains("approval cannot be given through a tool");
     }
 
     @Test
@@ -470,7 +473,7 @@ class LocalModeTest {
                 .contains("\"error\":\"'rank' must be between 1 and 8");
 
         // The same calls are counted
-        JsonNode stats = json.readTree(get("/api/tools").body()).get(1).get("stats");
+        JsonNode stats = json.readTree(get("/api/tools").body()).get(2).get("stats");
         assertThat(stats.get("rejected").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(stats.get("calls").asInt()).isEqualTo(stats.get("ok").asInt() + stats.get("rejected").asInt()
                 + stats.get("errors").asInt());
@@ -511,7 +514,7 @@ class LocalModeTest {
 
         JsonNode tools = mcp("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}").get("tools");
         assertThat(tools).extracting(t -> t.get("name").asString()).containsExactlyInAnyOrder("getFailureSummary",
-                "getFinding", "lookupRunbook", "searchHistoricalRca");
+                "getFinding", "lookupRunbook", "searchHistoricalRca", "draftIncident");
         for (JsonNode t : tools) {
             assertThat(t.get("description").asString()).isNotBlank();
             assertThat(t.get("inputSchema").get("type").asString()).isEqualTo("object");

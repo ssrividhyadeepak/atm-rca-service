@@ -31,6 +31,7 @@ public class ScriptedChatModel implements ChatModel {
 
     private static final Pattern FINDING_NUMBER = Pattern.compile("(?i)(?:finding|rank|number|#)\\s*#?\\s*(\\d+)");
     private static final Pattern EXCEPTION_CLASS = Pattern.compile("\\b([A-Z]\\w*(?:Exception|Error))\\b");
+    private static final Pattern INCIDENT_WORDS = Pattern.compile("(raise|open|create|draft|file|log)\\b.*\\b(incident|ticket)");
     private static final List<String> RUNBOOK_WORDS = List.of("runbook", "how do i fix", "how to fix", "mitigat",
             "what should i do", "what do i do", "steps");
     private static final List<String> HISTORY_WORDS = List.of("before", "past", "histor", "previous", "seen",
@@ -73,6 +74,11 @@ public class ScriptedChatModel implements ChatModel {
         }
         if (HISTORY_WORDS.stream().anyMatch(q::contains)) {
             calls.add(call("searchHistoricalRca", "{\"query\":" + query + ",\"limit\":2}"));
+        }
+        if (INCIDENT_WORDS.matcher(q).find()) {
+            // "raise an incident for finding 2": draft it instead of describing it
+            calls.clear();
+            calls.add(call("draftIncident", "{\"rank\":" + (finding.reset().find() ? finding.group(1) : "1") + "}"));
         }
         if (calls.isEmpty()) {
             calls.add(call("getFailureSummary", "{}"));

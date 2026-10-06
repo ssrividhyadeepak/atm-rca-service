@@ -1,5 +1,7 @@
 # Tests start runs themselves; the schedule stays off
 rca:
+  incident:
+    mock-file: build/test-data/incidents/mock-incidents.jsonl
   rate-limit:
     # Tests make many calls in a second; SecurityTest sets its own limits
     default-per-minute: 100000

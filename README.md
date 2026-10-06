@@ -12,6 +12,7 @@ report and drafts an incident for approval. Built in ten runnable steps; see the
 | Application code | Sample source in a JSON file | Your git repositories, from `GIT_REMOTE_URL` |
 | Runbooks and past RCAs | Samples in `config/knowledge/` | Your folder, from `RCA_KNOWLEDGE_DIR`, plus every report the service saves |
 | Who may call | Anyone on this machine; no tokens | Bearer tokens from your identity provider, from `RCA_ISSUER_URI` |
+| Incidents | Mock: recorded, not sent | Mock until `RCA_INCIDENT_MODE=servicenow` is set on purpose |
 | Outside connections | None | Each one configured by environment variables |
 
 The service prints its mode and connections when it starts. With the prod profile it refuses
@@ -139,6 +140,8 @@ followed by the first monitoring run with the number of failed transactions it r
 | `RCA_REPO_DIR` | instead of a remote | An existing clone to read |
 | `RCA_ISSUER_URI` | yes | Identity provider that issues the bearer tokens |
 | `RCA_RESOURCE_URL` | when behind a proxy | Public URL of this service |
+| `RCA_INCIDENT_MODE` | no (`mock`) | `servicenow` to create real incidents on approval |
+| `SERVICENOW_URL`, `SERVICENOW_USERNAME`, `SERVICENOW_PASSWORD` or `SERVICENOW_TOKEN` | with `servicenow` | The ServiceNow instance and an account that may create incidents |
 | `RCA_NAMESPACE` | no (`prod`) | Kubernetes namespace whose events are searched |
 | `RCA_INPUT_DIR` | no (`data/rca-input`) | Where the daily RCA input files are written |
 | `RCA_LOG_DIR` | no (`logs`) | Where `audit.log`, the record of every tool call, is written |
@@ -241,7 +244,7 @@ tested with; add a case when you add a document.
 
 ### Tools an assistant can call
 
-Four read-only functions, each with a name, a description and a JSON Schema for its
+Five functions - four read-only, one that creates an incident draft - each with a name, a description and a JSON Schema for its
 arguments generated from the method signature:
 
 | Tool | Arguments | Returns |
@@ -250,6 +253,7 @@ arguments generated from the method signature:
 | `getFinding` | `rank` | Everything about one finding: cause, next step, evidence, source line, runbook |
 | `lookupRunbook` | `query`, `limit` (optional) | Verdict `MATCH` or `NO_MATCH`, and the runbooks with how they matched |
 | `searchHistoricalRca` | `query`, `limit` (optional) | The same for past RCAs, excluding the day being analysed |
+| `draftIncident` | `rank`, `note` (optional) | An incident draft for the finding. The only tool that changes anything; it sends nothing |
 
 List them with their input and output schemas and call counts, or call one by name with
 JSON arguments - what a model does, done by hand:
@@ -288,7 +292,7 @@ masks the question, and sends the model the system prompt in
 
 ### MCP: the tools for Copilot and other clients
 
-The same four tools are served over the Model Context Protocol at `/mcp` (Streamable HTTP,
+The same five tools are served over the Model Context Protocol at `/mcp` (Streamable HTTP,
 stateless), together with a prompt, `daily_rca`, that tells a client's model how to put
 together the day's briefing from them. An MCP call goes through the same validation, scope
 check, rate limit and audit line as any other tool call, and a refused call comes back as a
@@ -322,6 +326,58 @@ To check the endpoint without a client:
 curl -s -X POST http://localhost:8090/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
+### From a finding to an incident
+
+```
+finding --draft--> DRAFT --approve--> APPROVED --submit--> SUBMITTED (incident number)
+                     \--reject--> REJECTED
+```
+
+1. **Draft.** `POST /api/incidents/drafts` with `{"rank": 1}`, or the `draftIncident` tool
+   from the assistant or an MCP client. The text is built from the finding: what failed,
+   the likely cause with its confidence, the next step, the evidence, the suspect commit and
+   the runbook. Priority comes from the severity (HIGH is "2 - High"; nothing is raised as
+   critical automatically) and the assignment group from the runbook's owner.
+2. **Review.** `GET /api/incidents/{id}` shows the draft. Nothing has been sent.
+3. **Decide.** `POST /api/incidents/{id}/approve` creates the incident;
+   `POST /api/incidents/{id}/reject` with a `reason` drops it.
+
+What keeps this safe:
+
+- **A person approves.** Approval is an endpoint with its own scope, `incident:approve`,
+  and is not offered as a tool, so no assistant can approve. With security on, whoever
+  approves must not be the client that drafted.
+- **One problem, one incident.** Drafting a finding that already has an open or submitted
+  incident from the last 7 days returns that one.
+- **A finding that only repeats another component's failure is refused,** with a pointer
+  to the origin.
+- **A note from the assistant is checked:** it may only mention ids, files, commits and
+  exceptions that are in the finding.
+- **If the ticket system is down,** the approval is kept, the draft stays APPROVED with the
+  reason, and `POST /api/incidents/{id}/submit` tries again. The draft id is sent as the
+  correlation id and looked up first, so a retry cannot create a duplicate.
+- **Every step is on the audit trail:** who drafted, who approved or rejected, and the
+  incident number.
+
+The ticket system is a mock by default, also with the prod profile: the incident gets a
+number and what would have been sent is appended to `data/incidents/mock-incidents.jsonl`.
+Real ServiceNow incidents are created only after setting `RCA_INCIDENT_MODE=servicenow`
+with `SERVICENOW_URL` and credentials.
+
+### End-to-end demo
+
+With the service running, one script walks through the whole flow - monitoring run, RCA
+report, a finding in detail, incident draft, the duplicate check, approval and the audit
+trail:
+
+```bash
+scripts/demo.sh
+```
+
+With security on, give it a token that holds `rca:read rca:write incident:read
+incident:write incident:approve` in `RCA_TOKEN`; note that the four-eyes rule will then
+refuse the approval step, because the script drafts and approves as the same client.
+
 ### Security, rate limits and audit
 
 `rca.security.mode` (or `RCA_SECURITY_MODE`) decides who may call:
@@ -342,6 +398,9 @@ With `dev` and `jwt` the token's signature, expiry, issuer and audience
 | `logs:read` | `/api/failures`: the failure events themselves |
 | `kb:read` | Knowledge search; the `lookupRunbook` and `searchHistoricalRca` tools |
 | `code:read` | `/api/source/locate` |
+| `incident:read` | Incident drafts and what became of them |
+| `incident:write` | Drafting an incident; the `draftIncident` tool. Sends nothing |
+| `incident:approve` | Approving or rejecting a draft. Approval creates the incident: for people, not assistants |
 
 Listing tools, asking the assistant and connecting over MCP need any valid token; the assistant then acts with
 the caller's scopes, so a tool the caller may not use is refused to the assistant too.
@@ -490,4 +549,4 @@ that is not possible.
 | 7 | Tools a model can call, with a scripted stand-in for the model | done |
 | 8 | MCP server exposing the tools | done |
 | 9 | Enterprise controls: authN/Z, rate limiting, validation, guardrails, audit | done |
-| 10 | Incident workflow: RCA, incident draft, approval, mock incident | |
+| 10 | Incident workflow: RCA, incident draft, approval, mock incident | done |

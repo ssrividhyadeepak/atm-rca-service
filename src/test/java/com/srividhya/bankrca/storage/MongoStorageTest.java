@@ -128,6 +128,37 @@ class MongoStorageTest {
     }
 
     @Test
+    void keepsIncidentDrafts() {
+        Assumptions.assumeTrue(uri != null, "mongod could not be started on this machine");
+        MongoStorageConfig config = new MongoStorageConfig();
+        RcaProperties props = props(uri);
+        try (MongoClient client = config.mongoClient(props)) {
+            MongoTemplate template = config.mongoTemplate(client, props);
+            template.dropCollection("incident_drafts");
+            com.srividhya.bankrca.incident.MongoIncidentStore store = new com.srividhya.bankrca.incident.MongoIncidentStore(template);
+            com.srividhya.bankrca.incident.IncidentDraft draft = new com.srividhya.bankrca.incident.IncidentDraft(
+                    "DRAFT-0000aaaa", "DRAFT", "2026-10-02", "sig-1", 1, "short", "long\ntext", "2 - High", "pay-p1",
+                    "Platform", "DOWNSTREAM_TIMEOUT", "a9aa3e8f10", "RB-001", null, "copilot", "2026-10-02T00:00:00.000Z",
+                    null, null, null, null, null, null, null);
+
+            store.save(draft);
+            store.save(draft.decided("REJECTED", "oncall", "2026-10-02T00:05:00.000Z", "duplicate"));
+            store.save(new com.srividhya.bankrca.incident.IncidentDraft("DRAFT-0000bbbb", "DRAFT", "2026-10-02", "sig-1", 1,
+                    "short", "long", "2 - High", "pay-p1", "Platform", "DOWNSTREAM_TIMEOUT", null, null, null, "copilot",
+                    "2026-10-02T01:00:00.000Z", null, null, null, null, null, null, null));
+
+            assertThat(store.find("DRAFT-0000aaaa").orElseThrow().status()).isEqualTo("REJECTED");
+            assertThat(store.find("DRAFT-0000aaaa").orElseThrow().decisionComment()).isEqualTo("duplicate");
+            assertThat(store.find("DRAFT-nope")).isEmpty();
+            assertThat(store.latest(5)).extracting(com.srividhya.bankrca.incident.IncidentDraft::id)
+                    .containsExactly("DRAFT-0000bbbb", "DRAFT-0000aaaa");
+            // A rejected draft does not count as an incident for the problem
+            assertThat(store.activeForSignature("sig-1")).extracting(com.srividhya.bankrca.incident.IncidentDraft::id)
+                    .containsExactly("DRAFT-0000bbbb");
+        }
+    }
+
+    @Test
     void refusesToStartWithoutAUri() {
         assertThatThrownBy(() -> new MongoStorageConfig().mongoClient(props(" ")))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("MONGODB_URI is not set");

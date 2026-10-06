@@ -9,6 +9,8 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import com.srividhya.bankrca.incident.IncidentService;
+import com.srividhya.bankrca.incident.IncidentService.DraftResult;
 import com.srividhya.bankrca.knowledge.KnowledgeHit;
 import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.rca.RcaReport;
@@ -19,7 +21,9 @@ import com.srividhya.bankrca.security.Scopes;
 /**
  * The functions an assistant may call. Design rules:
  * - each does one thing, with named, described parameters and a typed result
- * - all are read-only and return data that is already masked
+ * - all are read-only except draftIncident, which creates a draft that a person must approve;
+ *   there is deliberately no tool that approves or submits
+ * - results are already masked
  * - arguments are validated; a refusal says what to send instead, so the model can correct itself
  * - results are capped in size
  * - each needs a scope, which the caller's token must carry
@@ -51,8 +55,10 @@ public class RcaTools {
     private final RcaService rca;
     private final KnowledgeService knowledge;
     private final ToolAudit audit;
+    private final IncidentService incidents;
 
-    public RcaTools(RcaService rca, KnowledgeService knowledge, ToolAudit audit) {
+    public RcaTools(RcaService rca, KnowledgeService knowledge, ToolAudit audit, IncidentService incidents) {
+        this.incidents = incidents;
         this.rca = rca;
         this.knowledge = knowledge;
         this.audit = audit;
@@ -120,6 +126,21 @@ public class RcaTools {
             @ToolParam(required = false, description = "How many past RCAs to return, 1 to 5 (default 3)") Integer limit) {
         return audit.run("searchHistoricalRca", Set.of(Scopes.KB_READ), args("query", query, "limit", limit),
                 () -> search(query, limit, KnowledgeService.PAST_RCA));
+    }
+
+    @Tool(name = "draftIncident", description = """
+            Draft an incident for one finding of the latest analysis. This only creates a
+            draft: nothing is sent to the ticket system until a person approves it, and
+            approval cannot be given through a tool. The draft's text, priority and assignment
+            group are built from the finding. If an incident for the same problem already
+            exists it is returned instead (created=false). A finding that only repeats another
+            component's failure is refused; draft its origin. Tell the user the draft id and
+            that it is waiting for approval.""")
+    public DraftResult draftIncident(
+            @ToolParam(description = "Rank of the finding in the latest analysis, starting at 1") Integer rank,
+            @ToolParam(required = false, description = "Optional note for the reviewer, at most 600 characters. It may only mention ids, files, commits and exceptions that getFinding returned for this finding") String note) {
+        return audit.run("draftIncident", Set.of(Scopes.RCA_READ, Scopes.INCIDENT_WRITE),
+                args("rank", rank, "noteChars", note == null ? null : note.length()), () -> incidents.draft(rank, note));
     }
 
     private KnowledgeSearchResult search(String query, Integer limit, String type) {

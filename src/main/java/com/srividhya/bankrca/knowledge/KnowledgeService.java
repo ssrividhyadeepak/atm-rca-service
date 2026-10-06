@@ -82,6 +82,12 @@ public class KnowledgeService {
                 + index.description();
     }
 
+    /** The "Owner:" of a runbook, by its id (e.g. RB-001); null when there is none. */
+    public synchronized String owner(String runbookId) {
+        return docs.values().stream().filter(d -> runbookId.equals(d.metadata().get("id")))
+                .map(d -> d.metadata().get("owner")).findFirst().orElse(null);
+    }
+
     public String mode() {
         return index.mode();
     }

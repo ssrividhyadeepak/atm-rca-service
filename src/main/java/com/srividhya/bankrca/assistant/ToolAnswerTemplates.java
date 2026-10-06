@@ -49,6 +49,15 @@ final class ToolAnswerTemplates {
                         + data.get("severity").asString() + ", confidence " + data.get("confidence").asString()
                         + "). Likely cause: " + data.get("likelyCause").asString() + " Next step: "
                         + data.get("suggestedAction").asString());
+            } else if (r.name().equals("draftIncident")) {
+                JsonNode d = data.get("draft");
+                parts.add((data.get("created").asBoolean() ? "Incident draft " + d.get("id").asString() + " created: "
+                        : "An incident for this problem already exists, " + d.get("id").asString() + " ("
+                                + d.get("status").asString() + "): ")
+                        + d.get("shortDescription").asString() + " Priority " + d.get("priority").asString()
+                        + ", assigned to " + d.get("assignmentGroup").asString() + "."
+                        + (d.get("status").asString().equals("DRAFT")
+                                ? " Nothing has been sent: it is waiting for a person to approve it." : ""));
             } else {
                 boolean runbook = r.name().equals("lookupRunbook");
                 if (data.get("verdict").asString().equals("NO_MATCH")) {

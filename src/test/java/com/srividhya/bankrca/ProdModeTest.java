@@ -266,6 +266,35 @@ class ProdModeTest {
         assertThat(json.readTree(metadata.body()).get("authorization_servers").get(0).asString()).isEqualTo(IDP.issuer());
     }
 
+    @Test
+    void raisesAnIncidentOnlyAfterAnotherPersonApprovesAndKeepsItInMongo() throws Exception {
+        SPLUNK.status = 200;
+        SPLUNK.response = TWO_FAILURES;
+        post("/api/rca");
+        String copilot = IDP.token("copilot", "rca:read incident:write incident:read");
+
+        HttpRequest draftRequest = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/incidents/drafts"))
+                .header("Authorization", "Bearer " + copilot).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"rank\":1}")).build();
+        JsonNode draft = json.readTree(http.send(draftRequest, HttpResponse.BodyHandlers.ofString()).body()).get("draft");
+        String id = draft.get("id").asString();
+        assertThat(mongo.getCollection("incident_drafts").find(new org.bson.Document("_id", id)).first().getString("status"))
+                .isEqualTo("DRAFT");
+
+        assertThat(send("POST", "/api/incidents/" + id + "/approve", copilot).statusCode()).as("no approve scope").isEqualTo(403);
+        HttpResponse<String> approved = send("POST", "/api/incidents/" + id + "/approve",
+                IDP.token("oncall.priya", "incident:approve"));
+
+        assertThat(approved.statusCode()).isEqualTo(200);
+        org.bson.Document stored = mongo.getCollection("incident_drafts").find(new org.bson.Document("_id", id)).first();
+        assertThat(stored.getString("status")).isEqualTo("SUBMITTED");
+        assertThat(stored.getString("createdBy")).isEqualTo("copilot");
+        assertThat(stored.getString("decidedBy")).isEqualTo("oncall.priya");
+        // Real tickets are not created just because the profile is prod
+        assertThat(stored.getString("incidentSystem")).isEqualTo("mock");
+        assertThat(stored.getString("incidentNumber")).startsWith("INC");
+    }
+
     private HttpResponse<String> mcp(String token, String body) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/mcp"))
                 .header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream")

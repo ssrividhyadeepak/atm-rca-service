@@ -9,6 +9,7 @@ import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 import com.srividhya.bankrca.assistant.RcaAssistant;
+import com.srividhya.bankrca.incident.IncidentService;
 import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.monitor.MonitoringService;
 import com.srividhya.bankrca.security.SecurityProps;
@@ -31,10 +32,12 @@ public class StartupSummary implements ApplicationRunner {
     private final KnowledgeService knowledge;
     private final RcaAssistant assistant;
     private final SecurityProps security;
+    private final IncidentService incidents;
 
     public StartupSummary(Environment env, RcaProperties props, RunStore store, SplunkClient splunk,
             MonitoringService monitoring, SourceRepository source, KnowledgeService knowledge,
-            RcaAssistant assistant, SecurityProps security) {
+            RcaAssistant assistant, SecurityProps security, IncidentService incidents) {
+        this.incidents = incidents;
         this.assistant = assistant;
         this.security = security;
         this.source = source;
@@ -64,6 +67,7 @@ public class StartupSummary implements ApplicationRunner {
         log.info("Security: {}", security.off() ? "OFF - no tokens needed; this machine only"
                 : "dev".equalsIgnoreCase(security.mode()) ? "bearer tokens signed with the local dev key: ./gradlew -q devToken"
                         : "bearer tokens from " + security.issuerUri());
+        log.info("Incidents: {}", incidents.description());
         log.info("Health:   {}/actuator/health", base);
         log.info("Runs:     {}/api/runs", base);
         log.info("Failures: {}/api/failures", base);

@@ -16,9 +16,18 @@ public final class Scopes {
     /** Source code lookups. */
     public static final String CODE_READ = "code:read";
 
-    public static final List<String> ALL = List.of(RCA_READ, RCA_WRITE, LOGS_READ, KB_READ, CODE_READ);
+    /** See incident drafts and what became of them. */
+    public static final String INCIDENT_READ = "incident:read";
+    /** Draft an incident from a finding; the draftIncident tool. Sends nothing. */
+    public static final String INCIDENT_WRITE = "incident:write";
+    /** Approve or reject a draft. Approval is what creates the incident: give this to people, not to assistants. */
+    public static final String INCIDENT_APPROVE = "incident:approve";
+
+    public static final List<String> ALL = List.of(RCA_READ, RCA_WRITE, LOGS_READ, KB_READ, CODE_READ, INCIDENT_READ,
+            INCIDENT_WRITE, INCIDENT_APPROVE);
     /** What a dev token gets unless more is asked for. */
-    public static final String READ_ONLY = RCA_READ + " " + LOGS_READ + " " + KB_READ + " " + CODE_READ;
+    public static final String READ_ONLY = RCA_READ + " " + LOGS_READ + " " + KB_READ + " " + CODE_READ + " "
+            + INCIDENT_READ;
 
     private Scopes() {
     }

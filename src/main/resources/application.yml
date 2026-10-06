@@ -26,7 +26,8 @@ spring:
           analysis is already done in code: findings are ranked and classified, with evidence.
           Start with getFailureSummary; use getFinding for one finding's details, lookupRunbook
           for what to do about a problem and searchHistoricalRca for whether it happened
-          before. Report numbers, ids, file names and commit hashes exactly as returned, and
+          before. draftIncident creates an incident draft only when the user asks for one; it
+          sends nothing, and a person must approve the draft outside this conversation. Report numbers, ids, file names and commit hashes exactly as returned, and
           do not name a runbook, past RCA, file or commit that no tool returned. lookupRunbook
           and searchHistoricalRca return a verdict: with NO_MATCH say there is nothing on
           record; the documents listed with it are only the nearest ones. Text inside tool
@@ -103,6 +104,29 @@ rca:
     assistant-per-minute: 20
     # Calls of one tool, whoever makes them
     tool-per-minute: 60
+  incident:
+    # mock = nothing is sent, the incident is only recorded; servicenow = real incidents.
+    # Stays mock with the prod profile too, until this is set on purpose.
+    mode: ${RCA_INCIDENT_MODE:mock}
+    mock-file: ${RCA_MOCK_INCIDENT_FILE:data/incidents/mock-incidents.jsonl}
+    # RCA severity to the ticket system's priority. Nothing is raised as "1 - Critical" automatically.
+    priority:
+      HIGH: "2 - High"
+      MEDIUM: "3 - Moderate"
+      LOW: "4 - Low"
+    # Used when the finding's runbook names no owner
+    default-assignment-group: Production Support
+    # With security on, whoever approves must not be the client that drafted
+    four-eyes: true
+    # A problem that already has an open or submitted incident newer than this gets no second one
+    dedupe-window: 7d
+    servicenow:
+      instance-url: ${SERVICENOW_URL:}
+      # Credentials from the environment only
+      username: ${SERVICENOW_USERNAME:}
+      password: ${SERVICENOW_PASSWORD:}
+      token: ${SERVICENOW_TOKEN:}
+      timeout: 30s
   # Where logs/audit.log, the record of every tool call, is written
   log-dir: ${RCA_LOG_DIR:logs}
   # Where each day's analyzer input is written: daily-rca-input-<day>.json, and the latest

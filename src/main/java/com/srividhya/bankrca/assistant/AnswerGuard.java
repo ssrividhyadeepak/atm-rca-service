@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
  * from the question. It catches invented or mistyped references, which would send an engineer
  * to the wrong place. It does not check numbers or whether the reasoning is right.
  */
-final class AnswerGuard {
+public final class AnswerGuard {
 
     private static final List<Pattern> CITATIONS = List.of(
             Pattern.compile("\\bRB-\\d+\\b"),
@@ -26,7 +26,7 @@ final class AnswerGuard {
     }
 
     /** The citations in the answer that appear neither in a tool result nor in the question. */
-    static List<String> ungrounded(String answer, String question, List<String> toolResults) {
+    public static List<String> ungrounded(String answer, String question, List<String> toolResults) {
         String known = question + "\n" + String.join("\n", toolResults);
         List<String> ungrounded = new ArrayList<>();
         for (Pattern p : CITATIONS) {

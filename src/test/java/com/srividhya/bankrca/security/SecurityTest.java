@@ -101,7 +101,7 @@ class SecurityTest {
         JsonNode metadata = json.readTree(send("GET", "/.well-known/oauth-protected-resource", null, null, null).body());
         assertThat(metadata.get("authorization_servers").get(0).asString()).isEqualTo(DevKeys.ISSUER);
         assertThat(metadata.get("scopes_supported").toString()).contains("rca:read", "rca:write", "logs:read", "kb:read",
-                "code:read");
+                "code:read", "incident:read", "incident:write", "incident:approve");
     }
 
     @Test
@@ -142,7 +142,7 @@ class SecurityTest {
         String kbOnly = token("kb-only", "kb:read");
 
         // Any valid token may list the tools
-        assertThat(json.readTree(send("GET", "/api/tools", kbOnly, null, null).body())).hasSize(4);
+        assertThat(json.readTree(send("GET", "/api/tools", kbOnly, null, null).body())).hasSize(5);
         assertThat(send("POST", "/api/tools/lookupRunbook", kbOnly, "{\"query\":\"LedgerPostingException\"}", null)
                 .statusCode()).isEqualTo(200);
 
@@ -208,6 +208,54 @@ class SecurityTest {
     }
 
     @Test
+    void anAssistantMayDraftAnIncidentButOnlyAPersonWithTheScopeMayApproveIt() throws Exception {
+        assertThat(status("POST", "/api/rca", token("operator", "rca:write"))).isEqualTo(200);
+        String copilot = token("copilot", "rca:read incident:write incident:read");
+        String oncall = token("oncall.priya", "incident:approve incident:read");
+
+        // Drafting needs incident:write, through the endpoint and through the tool
+        assertThat(send("POST", "/api/incidents/drafts", token("viewer", "rca:read incident:read"), "{\"rank\":2}", null)
+                .statusCode()).isEqualTo(403);
+        HttpResponse<String> toolDenied = send("POST", "/api/tools/draftIncident", token("viewer2", "rca:read"),
+                "{\"rank\":2}", null);
+        assertThat(toolDenied.statusCode()).isEqualTo(403);
+        assertThat(toolDenied.body()).contains("draftIncident needs scope incident:write");
+
+        JsonNode drafted = json.readTree(send("POST", "/api/tools/draftIncident", copilot, "{\"rank\":2}", null).body());
+        String id = drafted.get("draft").get("id").asString();
+        assertThat(drafted.get("draft").get("createdBy").asString()).isEqualTo("copilot");
+
+        // The assistant's token cannot approve: it lacks the scope
+        assertThat(send("POST", "/api/incidents/" + id + "/approve", copilot, "{}", null).statusCode()).isEqualTo(403);
+        assertThat(send("GET", "/api/incidents/" + id, oncall, null, null).statusCode()).isEqualTo(200);
+        assertThat(send("GET", "/api/incidents/" + id, token("kb", "kb:read"), null, null).statusCode()).isEqualTo(403);
+
+        JsonNode approved = json.readTree(send("POST", "/api/incidents/" + id + "/approve", oncall, "{}", null).body());
+        assertThat(approved.get("status").asString()).isEqualTo("SUBMITTED");
+        assertThat(approved.get("decidedBy").asString()).isEqualTo("oncall.priya");
+        assertThat(approved.get("createdBy").asString()).isEqualTo("copilot");
+    }
+
+    @Test
+    void whoeverDraftedAnIncidentCannotApproveItThemselves() throws Exception {
+        assertThat(status("POST", "/api/rca", token("operator", "rca:write"))).isEqualTo(200);
+        // One client holding both scopes
+        String both = token("oncall.sam", "rca:read incident:write incident:approve incident:read");
+        String id = json.readTree(send("POST", "/api/incidents/drafts", both, "{\"rank\":3}", null).body())
+                .get("draft").get("id").asString();
+
+        HttpResponse<String> self = send("POST", "/api/incidents/" + id + "/approve", both, "{}", null);
+
+        assertThat(self.statusCode()).isEqualTo(403);
+        assertThat(self.body()).contains("was created by 'oncall.sam' and must be approved by someone else");
+        assertThat(json.readTree(send("GET", "/api/incidents/" + id, both, null, null).body()).get("status").asString())
+                .isEqualTo("DRAFT");
+        // Someone else can
+        assertThat(json.readTree(send("POST", "/api/incidents/" + id + "/approve",
+                token("oncall.priya", "incident:approve"), "{}", null).body()).get("status").asString()).isEqualTo("SUBMITTED");
+    }
+
+    @Test
     void mcpNeedsATokenAndEnforcesEachToolsScope() throws Exception {
         assertThat(status("POST", "/api/rca", token("operator", "rca:write"))).isEqualTo(200);
         String list = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}";
@@ -218,7 +266,7 @@ class SecurityTest {
 
         // A valid token sees the tools; calling one needs that tool's scope
         String kbOnly = token("copilot-kb", "kb:read");
-        assertThat(result(mcp(kbOnly, list, null)).get("tools")).hasSize(4);
+        assertThat(result(mcp(kbOnly, list, null)).get("tools")).hasSize(5);
         JsonNode allowed = result(mcp(kbOnly, call("lookupRunbook", "{\"query\":\"LedgerPostingException\"}"), null));
         assertThat(allowed.path("isError").asBoolean()).isFalse();
         JsonNode denied = result(mcp(kbOnly, call("getFailureSummary", "{}"), null));

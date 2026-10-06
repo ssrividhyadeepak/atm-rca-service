@@ -72,6 +72,10 @@ public class SecurityConfig {
                         .hasAuthority(scope(Scopes.RCA_READ))
                         .requestMatchers(HttpMethod.GET, "/api/knowledge", "/api/knowledge/**").hasAuthority(scope(Scopes.KB_READ))
                         .requestMatchers(HttpMethod.POST, "/api/source/locate").hasAuthority(scope(Scopes.CODE_READ))
+                        .requestMatchers(HttpMethod.POST, "/api/incidents/drafts").hasAuthority(scope(Scopes.INCIDENT_WRITE))
+                        .requestMatchers(HttpMethod.POST, "/api/incidents/*/approve", "/api/incidents/*/reject",
+                                "/api/incidents/*/submit").hasAuthority(scope(Scopes.INCIDENT_APPROVE))
+                        .requestMatchers(HttpMethod.GET, "/api/incidents", "/api/incidents/*").hasAuthority(scope(Scopes.INCIDENT_READ))
                         // Any valid token may list tools and ask; each tool call is checked for its own scope
                         .requestMatchers("/api/tools", "/api/tools/**", "/api/assistant/**", "/mcp").authenticated()
                         .anyRequest().denyAll())
