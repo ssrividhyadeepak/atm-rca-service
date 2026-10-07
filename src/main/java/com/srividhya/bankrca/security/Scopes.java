@@ -19,6 +19,14 @@ public final class Scopes {
     /** Change requests from the change-management system; the serviceNowRecentChanges tool. */
     public static final String CHANGE_READ = "change:read";
 
+    /** Start an investigation and record hypotheses against it; the rcaCollectEvidence and rcaRecordHypotheses tools. */
+    public static final String INVESTIGATION_WRITE = "investigation:write";
+
+    /** Approve or reject a fix plan. Give this to people, not to assistants. */
+    public static final String INVESTIGATION_APPROVE = "investigation:approve";
+    /** Open a draft pull request for an approved fix plan; the gitDraftPullRequest tool. */
+    public static final String PR_WRITE = "pr:write";
+
     /** See incident drafts and what became of them. */
     public static final String INCIDENT_READ = "incident:read";
     /** Draft an incident from a finding; the draftIncident tool. Sends nothing. */
@@ -27,7 +35,7 @@ public final class Scopes {
     public static final String INCIDENT_APPROVE = "incident:approve";
 
     public static final List<String> ALL = List.of(RCA_READ, RCA_WRITE, LOGS_READ, KB_READ, CODE_READ, CHANGE_READ,
-            INCIDENT_READ, INCIDENT_WRITE, INCIDENT_APPROVE);
+            INVESTIGATION_WRITE, INVESTIGATION_APPROVE, PR_WRITE, INCIDENT_READ, INCIDENT_WRITE, INCIDENT_APPROVE);
     /** What a dev token gets unless more is asked for. */
     public static final String READ_ONLY = RCA_READ + " " + LOGS_READ + " " + KB_READ + " " + CODE_READ + " "
             + CHANGE_READ + " " + INCIDENT_READ;

@@ -2,6 +2,8 @@
 rca:
   incident:
     mock-file: build/test-data/incidents/mock-incidents.jsonl
+  pull-request:
+    mock-file: build/test-data/pull-requests/mock-pull-requests.jsonl
   rate-limit:
     # Tests make many calls in a second; SecurityTest sets its own limits
     default-per-minute: 100000

@@ -20,6 +20,10 @@ import com.srividhya.bankrca.change.ChangeService.ChangeSearch;
 import com.srividhya.bankrca.failure.FailedTransaction;
 import com.srividhya.bankrca.failure.FailureRetrievalService;
 import com.srividhya.bankrca.incident.IncidentService;
+import com.srividhya.bankrca.investigation.Investigation;
+import com.srividhya.bankrca.investigation.InvestigationService;
+import com.srividhya.bankrca.investigation.InvestigationService.FixPlanInput;
+import com.srividhya.bankrca.investigation.InvestigationService.HypothesisInput;
 import com.srividhya.bankrca.incident.IncidentService.DraftResult;
 import com.srividhya.bankrca.knowledge.KnowledgeHit;
 import com.srividhya.bankrca.knowledge.KnowledgeService;
@@ -85,10 +89,12 @@ public class RcaTools {
     private final Clock clock;
     private final ChangeService changes;
     private final SuspectService suspects;
+    private final InvestigationService investigations;
 
     public RcaTools(RcaService rca, KnowledgeService knowledge, ToolAudit audit, IncidentService incidents,
             FailureRetrievalService failures, TraceService traces, Clock clock, ChangeService changes,
-            SuspectService suspects) {
+            SuspectService suspects, InvestigationService investigations) {
+        this.investigations = investigations;
         this.suspects = suspects;
         this.changes = changes;
         this.failures = failures;
@@ -198,6 +204,123 @@ public class RcaTools {
                     return suspects.find(component.strip(), failure, Duration.ofHours(hours == null ? 168 : hours),
                             isBlank(failingClass) ? null : failingClass.strip());
                 });
+    }
+
+    @Tool(name = "rcaCollectEvidence", description = """
+            Start an investigation of one finding: gathers, in one call, the failure itself, one
+            failed request traced across services with the point where it went wrong, the
+            failing line in the code, the commits and the change requests before the failures
+            began, and the matching runbook and past RCAs. Returns an investigation id and the
+            evidence as numbered items (E1, E2 ...), each a sentence with its reference and the
+            points it carries. Use this first when asked for the root cause of a finding, then
+            reason over the evidence and record your conclusions with rcaRecordHypotheses. Use
+            the single-purpose tools (splunkTraceRequest, gitFindSuspects ...) to dig further.""")
+    public Investigation rcaCollectEvidence(
+            @ToolParam(description = "Rank of the finding, from getFailureSummary") Integer rank) {
+        return audit.run("rcaCollectEvidence", Set.of(Scopes.INVESTIGATION_WRITE, Scopes.RCA_READ, Scopes.LOGS_READ,
+                Scopes.CODE_READ, Scopes.CHANGE_READ), args("rank", rank), () -> investigations.collect(rank));
+    }
+
+    @Tool(name = "rcaRecordHypotheses", description = """
+            Record your ranked hypotheses for an investigation: 1 to 5, each a statement of the
+            cause in your own words plus the ids of the evidence that supports it. Every id must
+            be in the investigation, and a statement may name a change request, commit, runbook
+            or past RCA only if the evidence it cites contains it; otherwise the call is refused
+            and says what to correct. The score (0-95) and level of each hypothesis are computed
+            by the service from the evidence cited, and the list comes back ranked by it: the
+            score says how well supported a hypothesis is, not how likely it is to be right.
+            Recording again replaces the previous set. Offer alternatives, not one answer.""")
+    public Investigation rcaRecordHypotheses(
+            @ToolParam(description = "Investigation id from rcaCollectEvidence, e.g. INV-1a2b3c4d") String investigationId,
+            @ToolParam(description = "The hypotheses: statement (at most 600 characters), evidenceIds (e.g. [\"E3\", \"E5\"]) and, optionally, your own confidence LOW, MEDIUM or HIGH") List<HypothesisInput> hypotheses) {
+        return audit.run("rcaRecordHypotheses", Set.of(Scopes.INVESTIGATION_WRITE),
+                args("investigationId", investigationId, "hypotheses", hypotheses == null ? null : hypotheses.size()), () -> {
+                    try {
+                        return investigations.recordHypotheses(investigationId, hypotheses);
+                    } catch (InvestigationService.NotFoundException e) {
+                        throw new IllegalArgumentException(e.getMessage());
+                    }
+                });
+    }
+
+    @Tool(name = "rcaRecordFixPlan", description = """
+            Record the fix plan for one hypothesis of an investigation: what to do, how to undo
+            it, how to test it, and what it could affect. Optionally include edits - single-line
+            changes to code or config. The service checks the plan: it may name a change, commit,
+            runbook or past RCA only if the evidence contains it; blastRadiusComponents must be
+            among the investigation's knownComponents; and each edit's oldCode must equal the
+            deployed line, or the call is refused and shows what the line really is. The plan is
+            stored as PROPOSED. Only a person can approve it, outside this conversation - say so
+            when you report it. Recording again replaces the plan.""")
+    public Investigation rcaRecordFixPlan(
+            @ToolParam(description = "Investigation id, e.g. INV-1a2b3c4d") String investigationId,
+            @ToolParam(description = "Rank of the hypothesis the plan is for, normally 1") Integer hypothesisRank,
+            @ToolParam(description = "The plan") FixPlanInput plan) {
+        return audit.run("rcaRecordFixPlan", Set.of(Scopes.INVESTIGATION_WRITE),
+                args("investigationId", investigationId, "hypothesisRank", hypothesisRank, "edits",
+                        plan == null || plan.edits() == null ? 0 : plan.edits().size()),
+                () -> known(() -> investigations.recordFixPlan(investigationId, hypothesisRank, plan)));
+    }
+
+    @Tool(name = "investigationGet", description = """
+            The current state of an investigation: its evidence (including what a developer set
+            aside or added), the hypotheses with their scores, the fix plan and its status, the
+            pull request if one was drafted, and the history of who did what. Call it when a
+            conversation comes back to an investigation, before answering from memory.""")
+    public Investigation investigationGet(
+            @ToolParam(description = "Investigation id, e.g. INV-1a2b3c4d") String investigationId) {
+        return audit.run("investigationGet", Set.of(Scopes.RCA_READ), args("investigationId", investigationId),
+                () -> known(() -> investigations.get(investigationId)));
+    }
+
+    @Tool(name = "investigationExcludeEvidence", description = """
+            Set a piece of evidence aside because the developer says it does not apply ("that
+            change was never deployed", "that commit is unrelated"), or bring it back with
+            exclude=false. Use it only on the developer's say-so, with their reason. Excluded
+            evidence stays listed and counts for nothing: every hypothesis is scored again and
+            the new ranking is returned. An approved fix plan goes back to PROPOSED.""")
+    public Investigation investigationExcludeEvidence(
+            @ToolParam(description = "Investigation id, e.g. INV-1a2b3c4d") String investigationId,
+            @ToolParam(description = "Evidence id, e.g. E8") String evidenceId,
+            @ToolParam(required = false, description = "The developer's reason; required when excluding") String reason,
+            @ToolParam(required = false, description = "false to bring the evidence back (default true)") Boolean exclude) {
+        return audit.run("investigationExcludeEvidence", Set.of(Scopes.INVESTIGATION_WRITE),
+                args("investigationId", investigationId, "evidenceId", evidenceId, "exclude", exclude),
+                () -> known(() -> investigations.excludeEvidence(investigationId, evidenceId, exclude == null || exclude, reason)));
+    }
+
+    @Tool(name = "investigationAddNote", description = """
+            Add something the developer knows that no tool returned ("the host team confirms the
+            gateway was healthy"). It becomes a NOTE in the evidence that hypotheses can cite. It
+            adds nothing to a score, because the service cannot verify it. Record the
+            developer's words, not your own conclusions.""")
+    public Investigation investigationAddNote(
+            @ToolParam(description = "Investigation id, e.g. INV-1a2b3c4d") String investigationId,
+            @ToolParam(description = "What the developer said, at most 1000 characters") String note) {
+        return audit.run("investigationAddNote", Set.of(Scopes.INVESTIGATION_WRITE),
+                args("investigationId", investigationId, "noteChars", note == null ? null : note.length()),
+                () -> known(() -> investigations.addNote(investigationId, note)));
+    }
+
+    @Tool(name = "gitDraftPullRequest", description = """
+            Open a DRAFT pull request for an investigation's fix plan: a new branch carrying the
+            plan's edits, with the cause, evidence, test plan, blast radius and rollback in the
+            description. It works only after a person has approved the plan; until then the
+            call is refused, and you cannot approve it yourself. A draft cannot be merged until
+            a person reviews it and marks it ready. Calling again returns the same pull request.""")
+    public Investigation gitDraftPullRequest(
+            @ToolParam(description = "Investigation id, e.g. INV-1a2b3c4d") String investigationId) {
+        return audit.run("gitDraftPullRequest", Set.of(Scopes.PR_WRITE), args("investigationId", investigationId),
+                () -> known(() -> investigations.draftPullRequest(investigationId)));
+    }
+
+    /** An unknown investigation is a refusal the model can act on. */
+    private static <T> T known(java.util.function.Supplier<T> body) {
+        try {
+            return body.get();
+        } catch (InvestigationService.NotFoundException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
     }
 
     @Tool(name = "serviceNowRecentChanges", description = """

@@ -127,6 +127,20 @@ rca:
       password: ${SERVICENOW_PASSWORD:}
       token: ${SERVICENOW_TOKEN:}
       timeout: 30s
+  pull-request:
+    # mock = nothing is opened, the pull request is only recorded; github = real draft
+    # pull requests. Stays mock with the prod profile too, until this is set on purpose.
+    mode: ${RCA_PR_MODE:mock}
+    mock-file: ${RCA_MOCK_PR_FILE:data/pull-requests/mock-pull-requests.jsonl}
+    # https://api.github.com, or https://<host>/api/v3 for GitHub Enterprise
+    api-url: ${GIT_API_URL:https://api.github.com}
+    # owner/name of the repository the fix goes to, and the branch it targets
+    repository: ${GIT_PR_REPOSITORY:}
+    base-branch: ${GIT_PR_BASE_BRANCH:main}
+    # A token that may create branches and pull requests there; from the environment only.
+    # Not the read-only GIT_TOKEN used for mirroring.
+    token: ${GIT_PR_TOKEN:}
+    timeout: 30s
   change:
     # stub = sample changes from a file; servicenow = the change_request table, read-only,
     # using the ServiceNow connection above

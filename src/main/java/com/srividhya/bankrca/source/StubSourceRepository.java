@@ -14,6 +14,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -165,6 +166,21 @@ public class StubSourceRepository implements SourceRepository {
                 .sorted(Comparator.comparing(CommitChange::time).reversed())
                 .limit(limit)
                 .toList();
+    }
+
+    @Override
+    public Optional<String> lineAt(String component, String path, int line) {
+        for (StubFile f : load().files()) {
+            if (!f.path().equals(path)) {
+                continue;
+            }
+            for (Block block : f.blocks() == null ? List.<Block>of() : f.blocks()) {
+                if (line >= block.start() && line < block.start() + block.lines().size()) {
+                    return Optional.of(block.lines().get(line - block.start()));
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     private String where() {

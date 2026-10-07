@@ -195,6 +195,18 @@
           "author": "alex.ng",
           "message": "withdrawal: host.auth.timeout-ms 2000 -> 500 (CHG0030101)"
         }
+      ],
+      "lineCount": 20,
+      "blocks": [
+        {
+          "start": 12,
+          "lines": [
+            "host:",
+            "  auth:",
+            "    timeout-ms: 500",
+            "    max-attempts: 2"
+          ]
+        }
       ]
     },
     {

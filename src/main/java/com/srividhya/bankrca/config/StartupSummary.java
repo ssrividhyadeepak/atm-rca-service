@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import com.srividhya.bankrca.assistant.RcaAssistant;
 import com.srividhya.bankrca.change.ChangeService;
 import com.srividhya.bankrca.incident.IncidentService;
+import com.srividhya.bankrca.investigation.InvestigationService;
 import com.srividhya.bankrca.knowledge.KnowledgeService;
 import com.srividhya.bankrca.monitor.MonitoringService;
 import com.srividhya.bankrca.security.SecurityProps;
@@ -35,10 +36,13 @@ public class StartupSummary implements ApplicationRunner {
     private final SecurityProps security;
     private final IncidentService incidents;
     private final ChangeService changes;
+    private final InvestigationService investigations;
 
     public StartupSummary(Environment env, RcaProperties props, RunStore store, SplunkClient splunk,
             MonitoringService monitoring, SourceRepository source, KnowledgeService knowledge,
-            RcaAssistant assistant, SecurityProps security, IncidentService incidents, ChangeService changes) {
+            RcaAssistant assistant, SecurityProps security, IncidentService incidents, ChangeService changes,
+            InvestigationService investigations) {
+        this.investigations = investigations;
         this.changes = changes;
         this.incidents = incidents;
         this.assistant = assistant;
@@ -72,6 +76,7 @@ public class StartupSummary implements ApplicationRunner {
                         : "bearer tokens from " + security.issuerUri());
         log.info("Incidents: {}", incidents.description());
         log.info("Changes: {}", changes.description());
+        log.info("Pull requests: {}", investigations.pullRequestDescription());
         log.info("Health:   {}/actuator/health", base);
         log.info("Runs:     {}/api/runs", base);
         log.info("Failures: {}/api/failures", base);

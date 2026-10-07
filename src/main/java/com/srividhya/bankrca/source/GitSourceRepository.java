@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 import org.eclipse.jgit.api.Git;
@@ -242,6 +243,32 @@ public class GitSourceRepository implements SourceRepository {
         }
         found.sort(Comparator.comparing(CommitChange::time).reversed());
         return found.size() > limit ? List.copyOf(found.subList(0, limit)) : found;
+    }
+
+    @Override
+    public Optional<String> lineAt(String component, String path, int line) {
+        for (Source s : candidates(component)) {
+            try (Git git = Git.open(s.dir.toFile()); RevWalk walk = new RevWalk(git.getRepository())) {
+                Repository repo = git.getRepository();
+                ObjectId commit = repo.resolve(s.ref + "^{commit}");
+                if (commit == null) {
+                    continue;
+                }
+                try (TreeWalk tree = TreeWalk.forPath(repo, path, walk.parseCommit(commit).getTree())) {
+                    if (tree == null) {
+                        continue;
+                    }
+                    List<String> lines = new String(repo.open(tree.getObjectId(0)).getBytes(), StandardCharsets.UTF_8)
+                            .lines().toList();
+                    if (line >= 1 && line <= lines.size()) {
+                        return Optional.of(lines.get(line - 1));
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                log.warn("Reading {} in repository {} failed: {}", path, s.name, e.toString());
+            }
+        }
+        return Optional.empty();
     }
 
     /** Repositories configured for the component first, then those open to any component. */

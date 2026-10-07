@@ -2,6 +2,7 @@ package com.srividhya.bankrca.source;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import com.srividhya.bankrca.rca.StackTraces.Frame;
 
@@ -28,5 +29,14 @@ public interface SourceRepository {
      */
     default List<CommitChange> commits(String component, Instant from, Instant to, int limit) {
         return List.of();
+    }
+
+    /**
+     * One line of a file as deployed, so a proposed edit can be checked against it.
+     *
+     * @return empty when the file or the line cannot be read
+     */
+    default Optional<String> lineAt(String component, String path, int line) {
+        return Optional.empty();
     }
 }

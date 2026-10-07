@@ -28,7 +28,7 @@ while every data source stays stubbed for local runs and real behind the `prod` 
 | 4 | Mask before the model sees anything; audit every action | all tools | done for traces: payloads masked by field name, both tools audited |
 | 5 | Recent change requests for the services and window | `serviceNowRecentChanges` | done: stub file and real `change_request` client, timing against the failure |
 | 6 | Commits, PRs and config changes ranked by closeness to the failure | `gitFindSuspects` | done: commits before the failure ranked by time, failing class and kind of file; PR and change numbers from commit messages only |
-| 7 | Ranked hypotheses with evidence and a confidence score | `rcaCollectEvidence`, `rcaRecordHypotheses` | next |
-| 8 | Fix plan: remediation, test plan, blast radius | `rcaRecordFixPlan` | |
-| 9 | Multi-turn: the developer steers, the investigation remembers | `investigation...` | |
-| 10 | Draft PR after approval, never an autonomous change | `gitDraftPullRequest` | |
+| 7 | Ranked hypotheses with evidence and a confidence score | `rcaCollectEvidence`, `rcaRecordHypotheses` | done: numbered evidence, citations checked, score computed by the service; `investigate_finding` prompt |
+| 8 | Fix plan: remediation, test plan, blast radius | `rcaRecordFixPlan` | done: grounded text, blast radius within known components, edits checked against the deployed line |
+| 9 | Multi-turn: the developer steers, the investigation remembers | `investigationGet`, `investigationExcludeEvidence`, `investigationAddNote` | done: state and history kept, hypotheses re-scored |
+| 10 | Draft PR after approval, never an autonomous change | `gitDraftPullRequest` | done: refused until a person approves; mock by default, GitHub client behind `RCA_PR_MODE=github` |

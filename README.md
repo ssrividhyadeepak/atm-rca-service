@@ -386,6 +386,97 @@ In stub mode commits come from `config/stub-source.json` (a file entry may now l
 `className`, for a config file, and may list the `components` it belongs to). In git mode
 they are read from the deployed ref of the repositories configured for the component.
 
+### Investigations: evidence and ranked hypotheses
+
+This is where a model does the reasoning, with the facts and the score kept out of its hands:
+
+1. **Code gathers.** `rcaCollectEvidence(rank)` collects, for one finding, the failure, one
+   request traced end to end with its divergence, the failing line, the commits and change
+   requests before the failures began, and the runbook and past RCAs. Each item gets an id
+   (`E1`, `E2` ...), a one-sentence summary, and the points it is worth.
+2. **The model reasons.** It reads the evidence and calls `rcaRecordHypotheses` with 1 to 5
+   hypotheses: a statement in its own words plus the evidence ids that support it.
+3. **Code checks and scores.** A hypothesis is refused, with what to correct, if it cites an
+   id that is not there, or names a change request, commit, runbook or past RCA that the
+   evidence it cites does not contain. The rest are scored from the evidence cited and
+   returned ranked.
+
+| Evidence | Points |
+|---|---|
+| `DIVERGENCE` (the trace shows where the request went wrong) | 25 |
+| `COMMIT` | 25 / 15 / 8 / 3 for a suspect score of 80+ / 60+ / 40+ / lower |
+| `CHANGE` | 20 within 6 hours before the failures or in progress; 10 earlier; 0 after |
+| `FINDING`, `SOURCE` | 10 each |
+| `RUNBOOK`, `PAST_RCA` | 8 each |
+| `TRACE` | 5 |
+| A cited commit and change request that name each other | +10 |
+
+Only the best item of each type counts, and the score is capped at 95. `HIGH` is 70 and up,
+`MEDIUM` 40 and up. **The score says how well supported a hypothesis is, not how likely it is
+to be true**, and the weights are a first guess. The model may state its own confidence; it
+is stored as `modelConfidence` and does not affect the ranking.
+
+```bash
+curl -s -X POST localhost:8090/api/investigations -H 'Content-Type: application/json' -d '{"rank":1}'
+```
+
+```bash
+curl -s localhost:8090/api/investigations
+```
+
+Both tools need scope `investigation:write`; `rcaCollectEvidence` also needs the read
+scopes of what it gathers (`rca:read logs:read code:read change:read`). Investigations are
+kept in memory, the newest 200, and are lost on restart.
+
+In an MCP client the `investigate_finding` prompt (`prompts/investigate-finding.md`) runs
+the whole sequence. There is no model inside the service for this: without an MCP client
+such as Copilot you can call the two tools by hand, as above, and write the hypotheses yourself.
+
+### Developer in the loop: steering, fix plan, draft pull request
+
+An investigation is a conversation that keeps its state. `investigationGet` returns
+everything so far, including a `history` of who did what.
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `investigationGet` | `rca:read` | The current evidence, hypotheses, fix plan, pull request and history |
+| `investigationExcludeEvidence` | `investigation:write` | Sets evidence aside on the developer's say-so (a reason is required), or restores it. It then counts for nothing and every hypothesis is scored again |
+| `investigationAddNote` | `investigation:write` | Records something the developer knows as a `NOTE`: it can be cited and is worth 0 points, because the service cannot verify it |
+| `rcaRecordFixPlan` | `investigation:write` | The model's plan for one hypothesis: steps, rollback, test plan, blast radius, optional edits |
+| `gitDraftPullRequest` | `pr:write` | A draft pull request for the plan, only once a person has approved it |
+
+What the service checks in a fix plan:
+
+- It names a change request, commit, runbook or past RCA only if the evidence contains it.
+- `blastRadiusComponents` are among the investigation's `knownComponents` (the component
+  that failed and those in its trace).
+- Each edit is one line, and its `oldCode` equals the deployed line. If not, the call is
+  refused and shows what the line really is.
+- It adds `warnings` for a reviewer: the plan is not for the top hypothesis, the hypothesis
+  is not `HIGH`, or there are no edits.
+
+**Approval is not a tool.** A plan is `PROPOSED` until a person calls the endpoint, with a
+token that has `investigation:approve`; with security on, that cannot be the client that
+proposed it. Excluding evidence afterwards puts an approved plan back to `PROPOSED`.
+
+```bash
+curl -s -X POST localhost:8090/api/investigations/INV-xxxxxxxx/fix-plan/approve -H 'Content-Type: application/json' -d '{"reason":"Agreed with the owning team"}'
+```
+
+The pull request is always a **draft** on a new branch `rca/<investigation id>`; its
+description is written by the service from the investigation (problem, cause and score,
+evidence, fix, changes, test plan, blast radius, rollback, who proposed and who approved).
+Asking twice returns the same one.
+
+| Mode | Set | What happens |
+|---|---|---|
+| mock (default, also with the prod profile) | nothing | Recorded in `data/pull-requests/mock-pull-requests.jsonl`; nothing is opened |
+| GitHub / GitHub Enterprise | `RCA_PR_MODE=github`, `GIT_API_URL`, `GIT_PR_REPOSITORY` (owner/name), `GIT_PR_BASE_BRANCH`, `GIT_PR_TOKEN` | A branch from the base branch, one commit per edited file, a draft pull request. Never a push to the base branch, never a merge |
+
+Limits: edits are single-line replacements, so a fix that adds lines or files has to be
+finished by hand on the branch; one repository is configured for pull requests; and only
+GitHub's API is implemented (Bitbucket or GitLab would be another `PullRequestClient`).
+
 ### The assistant
 
 `POST /api/assistant/ask` answers a question by letting a chat model call those tools. The
@@ -513,6 +604,9 @@ With `dev` and `jwt` the token's signature, expiry, issuer and audience
 | `kb:read` | Knowledge search; the `lookupRunbook` and `searchHistoricalRca` tools |
 | `code:read` | `/api/source/locate` |
 | `change:read` | Change requests |
+| `investigation:write` | Start an investigation; record hypotheses and fix plans; exclude evidence; add notes |
+| `investigation:approve` | Approve or reject a fix plan. For people, not assistants |
+| `pr:write` | Open a draft pull request for an approved fix plan |
 | `incident:read` | Incident drafts and what became of them |
 | `incident:write` | Drafting an incident; the `draftIncident` tool. Sends nothing |
 | `incident:approve` | Approving or rejecting a draft. Approval creates the incident: for people, not assistants |

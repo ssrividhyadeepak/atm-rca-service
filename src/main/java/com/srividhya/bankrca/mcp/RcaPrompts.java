@@ -5,6 +5,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import org.springframework.ai.mcp.annotation.McpArg;
 import org.springframework.ai.mcp.annotation.McpPrompt;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
@@ -16,7 +17,7 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 
 /**
  * Prompts offered to MCP clients, where they show up as ready-made commands. The text is a
- * file in the code base (prompts/daily-rca.md), reviewed and released like code; the version
+ * file in the code base (prompts/*.md), reviewed and released like code; the version
  * is part of the description a client sees.
  */
 @Component
@@ -24,10 +25,15 @@ public class RcaPrompts {
 
     static final String DAILY_RCA_VERSION = "v1";
 
+    static final String INVESTIGATE_VERSION = "v1";
+
     private final String dailyRca;
+    private final String investigate;
 
     public RcaPrompts() {
         try {
+            this.investigate = new ClassPathResource("prompts/investigate-finding.md")
+                    .getContentAsString(StandardCharsets.UTF_8).strip();
             this.dailyRca = new ClassPathResource("prompts/daily-rca.md").getContentAsString(StandardCharsets.UTF_8).strip();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -39,5 +45,15 @@ public class RcaPrompts {
     public GetPromptResult dailyRca() {
         return new GetPromptResult("Daily failure briefing (daily-rca/" + DAILY_RCA_VERSION + ")",
                 List.of(new PromptMessage(Role.USER, new TextContent(dailyRca))));
+    }
+
+    @McpPrompt(name = "investigate_finding", title = "Investigate a finding",
+            description = "Gather the evidence for one finding, record ranked hypotheses and report them")
+    public GetPromptResult investigateFinding(
+            @McpArg(name = "rank", description = "Rank of the finding; the top one when left out", required = false) String rank) {
+        String which = rank == null || !rank.strip().matches("\\d{1,3}") ? "" : "\n\nThe finding to investigate is rank "
+                + rank.strip() + ".";
+        return new GetPromptResult("Investigate a finding (investigate-finding/" + INVESTIGATE_VERSION + ")",
+                List.of(new PromptMessage(Role.USER, new TextContent(investigate + which))));
     }
 }

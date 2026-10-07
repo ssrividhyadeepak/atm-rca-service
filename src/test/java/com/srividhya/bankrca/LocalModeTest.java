@@ -384,10 +384,11 @@ class LocalModeTest {
         JsonNode tools = json.readTree(get("/api/tools").body());
 
         assertThat(tools).extracting(t -> t.get("name").asString())
-                .containsExactly("draftIncident", "getFailureSummary", "getFinding", "gitFindSuspects", "lookupRunbook",
-                        "searchHistoricalRca",
-                        "serviceNowRecentChanges", "splunkFindFailures", "splunkTraceRequest");
-        JsonNode lookup = tools.get(4);
+                .containsExactly("draftIncident", "getFailureSummary", "getFinding", "gitDraftPullRequest",
+                        "gitFindSuspects", "investigationAddNote", "investigationExcludeEvidence", "investigationGet",
+                        "lookupRunbook", "rcaCollectEvidence", "rcaRecordFixPlan", "rcaRecordHypotheses",
+                        "searchHistoricalRca", "serviceNowRecentChanges", "splunkFindFailures", "splunkTraceRequest");
+        JsonNode lookup = tools.get(8);
         assertThat(lookup.get("description").asString()).startsWith("Find the runbook for a problem.").contains("NO_MATCH");
         // Input schema, generated from the method signature: what a model is given to fill in
         assertThat(lookup.get("inputSchema").get("type").asString()).isEqualTo("object");
@@ -517,7 +518,9 @@ class LocalModeTest {
         JsonNode tools = mcp("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}").get("tools");
         assertThat(tools).extracting(t -> t.get("name").asString()).containsExactlyInAnyOrder("getFailureSummary",
                 "getFinding", "lookupRunbook", "searchHistoricalRca", "draftIncident", "splunkFindFailures",
-                "splunkTraceRequest", "serviceNowRecentChanges", "gitFindSuspects");
+                "splunkTraceRequest", "serviceNowRecentChanges", "gitFindSuspects", "rcaCollectEvidence",
+                "rcaRecordHypotheses", "rcaRecordFixPlan", "investigationGet", "investigationExcludeEvidence",
+                "investigationAddNote", "gitDraftPullRequest");
         for (JsonNode t : tools) {
             assertThat(t.get("description").asString()).isNotBlank();
             assertThat(t.get("inputSchema").get("type").asString()).isEqualTo("object");
@@ -676,9 +679,160 @@ class LocalModeTest {
     }
 
     @Test
+    void collectsEvidenceThenChecksAndScoresTheHypothesesAModelRecords() throws Exception {
+        post("/api/runs");
+        JsonNode inv = json.readTree(mcp(mcpCall("rcaCollectEvidence", "{\"rank\":1}")).get("content").get(0).get("text")
+                .asString());
+        String id = inv.get("id").asString();
+
+        assertThat(id).startsWith("INV-");
+        assertThat(inv.get("component").asString()).isEqualTo("withdrawal-p1");
+        assertThat(inv.get("evidence")).extracting(e -> e.get("id").asString() + " " + e.get("type").asString() + " "
+                + e.get("points").asInt()).startsWith("E1 FINDING 10", "E2 TRACE 5", "E3 DIVERGENCE 25", "E4 SOURCE 10",
+                        "E5 COMMIT 25", "E6 COMMIT 15", "E7 COMMIT 8", "E8 CHANGE 20", "E9 CHANGE 10", "E10 CHANGE 0",
+                        "E11 RUNBOOK 8", "E12 PAST_RCA 8");
+        assertThat(inv.get("evidence").get(2).get("summary").asString())
+                .startsWith("TIMEOUT at withdrawal-p1 -> host-auth-gateway");
+        assertThat(inv.get("evidence").get(7).get("summary").asString()).contains("CHG0030101")
+                .endsWith("named by commit c0ffee4d21");
+        assertThat(inv.get("hypotheses")).isEmpty();
+
+        JsonNode recorded = json.readTree(mcp(mcpCall("rcaRecordHypotheses", "{\"investigationId\":\"" + id
+                + "\",\"hypotheses\":[{\"statement\":\"An outage at host-auth-gateway, unrelated to any change.\","
+                + "\"evidenceIds\":[\"E3\"],\"confidence\":\"HIGH\"},{\"statement\":\"CHG0030101 lowered the timeout to "
+                + "500ms (commit c0ffee4d21), below the gateway's normal response time.\",\"evidenceIds\":[\"E1\",\"E3\","
+                + "\"E6\",\"E8\",\"E11\"]}]}")).get("content").get(0).get("text").asString());
+
+        // Ranked by the evidence cited, whatever confidence the model claimed
+        JsonNode first = recorded.get("hypotheses").get(0);
+        assertThat(first.get("statement").asString()).startsWith("CHG0030101 lowered the timeout");
+        assertThat(first.get("score").asInt()).isEqualTo(88);
+        assertThat(first.get("level").asString()).isEqualTo("HIGH");
+        assertThat(first.get("scoreBreakdown")).hasSize(6);
+        assertThat(first.get("scoreBreakdown").get(5).asString())
+                .isEqualTo("+10 E6 and E8 are the same change: the commit names the change request");
+        JsonNode second = recorded.get("hypotheses").get(1);
+        assertThat(second.get("score").asInt()).isEqualTo(25);
+        assertThat(second.get("level").asString()).isEqualTo("LOW");
+        assertThat(second.get("modelConfidence").asString()).isEqualTo("HIGH");
+        assertThat(recorded.get("revision").asInt()).isEqualTo(1);
+        assertThat(json.readTree(get("/api/investigations/" + id).body()).get("hypotheses")).hasSize(2);
+
+        // Refused, with what to correct: an id that is not there, and a change the cited evidence does not contain
+        String start = "{\"investigationId\":\"" + id + "\",\"hypotheses\":[{\"statement\":";
+        JsonNode unknownId = mcp(mcpCall("rcaRecordHypotheses", start + "\"x\",\"evidenceIds\":[\"E99\"]}]}"));
+        assertThat(unknownId.get("isError").asBoolean()).isTrue();
+        assertThat(unknownId.get("content").get(0).get("text").asString()).contains("cites E99, which is not in this investigation");
+        JsonNode invented = mcp(mcpCall("rcaRecordHypotheses", start + "\"CHG0099999 broke it\",\"evidenceIds\":[\"E3\"]}]}"));
+        assertThat(invented.get("content").get(0).get("text").asString())
+                .contains("names CHG0099999, which is not in the evidence it cites");
+        JsonNode uncited = mcp(mcpCall("rcaRecordHypotheses", start + "\"Commit a9aa3e8f10 did it\",\"evidenceIds\":[\"E8\"]}]}"));
+        assertThat(uncited.get("content").get(0).get("text").asString()).contains("names commit a9aa3e8f10");
+        // The refused calls changed nothing
+        assertThat(json.readTree(get("/api/investigations/" + id).body()).get("revision").asInt()).isEqualTo(1);
+
+        assertThat(get("/api/investigations/INV-nope").statusCode()).isEqualTo(404);
+        assertThat(postJson("/api/investigations", "{\"rank\":99}").statusCode()).isEqualTo(400);
+        // A finding with no stack trace or trace steps still gets an investigation, with less in it
+        JsonNode thin = json.readTree(postJson("/api/investigations", "{\"rank\":8}").body());
+        assertThat(thin.get("evidence").get(0).get("type").asString()).isEqualTo("FINDING");
+    }
+
+    private JsonNode tool(String name, String arguments) throws Exception {
+        JsonNode result = mcp(mcpCall(name, arguments));
+        String text = result.get("content").get(0).get("text").asString();
+        return result.path("isError").asBoolean() ? json.getNodeFactory().stringNode(text) : json.readTree(text);
+    }
+
+    @Test
+    void aDeveloperSteersTheInvestigationAndOnlyAnApprovedPlanBecomesADraftPullRequest() throws Exception {
+        post("/api/runs");
+        String id = tool("rcaCollectEvidence", "{\"rank\":1}").get("id").asString();
+        String inv = "{\"investigationId\":\"" + id + "\"";
+        tool("rcaRecordHypotheses", inv + ",\"hypotheses\":[{\"statement\":\"CHG0030101 lowered the timeout to 500ms.\","
+                + "\"evidenceIds\":[\"E1\",\"E3\",\"E6\",\"E8\",\"E11\"]},{\"statement\":\"The code change in commit "
+                + "a9aa3e8f10 lowered the timeout.\",\"evidenceIds\":[\"E3\",\"E5\"]}]}");
+
+        // The developer says the change request does not apply: it counts for nothing and the scores follow
+        JsonNode excluded = tool("investigationExcludeEvidence", inv + ",\"evidenceId\":\"E8\",\"reason\":\"CHG0030101 "
+                + "was rolled back within minutes\"}");
+        assertThat(excluded.get("evidence").get(7).get("excluded").asBoolean()).isTrue();
+        assertThat(excluded.get("hypotheses")).extracting(h -> h.get("score").asInt() + " " + h.get("level").asString())
+                .containsExactly("58 MEDIUM", "50 MEDIUM");
+        assertThat(excluded.get("hypotheses").get(0).get("scoreBreakdown").get(0).asString())
+                .isEqualTo("+0 E8 CHANGE: set aside by a developer (CHG0030101 was rolled back within minutes)");
+        assertThat(tool("investigationExcludeEvidence", inv + ",\"evidenceId\":\"E8\"}").asString())
+                .contains("'reason' is required");
+        JsonNode restored = tool("investigationExcludeEvidence", inv + ",\"evidenceId\":\"E8\",\"exclude\":false}");
+        assertThat(restored.get("hypotheses").get(0).get("score").asInt()).isEqualTo(88);
+
+        // What the developer knows becomes evidence that can be cited and is worth nothing
+        JsonNode noted = tool("investigationAddNote", inv + ",\"note\":\"Host team confirms the gateway was healthy; "
+                + "ask sam@example.com\"}");
+        JsonNode note = noted.get("evidence").get(noted.get("evidence").size() - 1);
+        assertThat(note.get("type").asString()).isEqualTo("NOTE");
+        assertThat(note.get("points").asInt()).isZero();
+        assertThat(note.get("summary").asString()).doesNotContain("sam@example.com");
+
+        // The plan is checked: blast radius within what is known, edits against the deployed line
+        String plan = ",\"hypothesisRank\":1,\"plan\":{\"summary\":\"Restore the host authorization timeout to 2000ms\","
+                + "\"steps\":[\"Revert the setting changed by CHG0030101\",\"Deploy withdrawal-p1\"],"
+                + "\"rollback\":\"Redeploy the previous config map\",\"testPlan\":[\"Withdrawal against the slow-host "
+                + "simulator succeeds\",\"HostAuthTimeoutException count returns to zero\"],"
+                + "\"blastRadius\":\"Withdrawals only; slower failover if the host is really down\",";
+        String file = "withdrawal-service/src/main/resources/application.yml";
+        assertThat(tool("rcaRecordFixPlan", inv + plan + "\"blastRadiusComponents\":[\"ledger-p1\"]}}").asString())
+                .contains("names ledger-p1, which this failure is not known to involve");
+        assertThat(tool("rcaRecordFixPlan", inv + plan + "\"blastRadiusComponents\":[\"withdrawal-p1\"],\"edits\":[{\"path\":\""
+                + file + "\",\"line\":14,\"oldCode\":\"timeout-ms: 5000\",\"newCode\":\"timeout-ms: 2000\"}]}}").asString())
+                .contains("'oldCode' of edits[0] does not match the deployed code. Line 14 of " + file + " is: timeout-ms: 500");
+        JsonNode proposed = tool("rcaRecordFixPlan", inv + plan + "\"blastRadiusComponents\":[\"withdrawal-p1\"],\"edits\":[{"
+                + "\"path\":\"" + file + "\",\"line\":14,\"oldCode\":\"timeout-ms: 500\",\"newCode\":\"timeout-ms: 2000\"}]}}");
+        assertThat(proposed.get("fixPlan").get("status").asString()).isEqualTo("PROPOSED");
+        assertThat(proposed.get("fixPlan").get("warnings")).isEmpty();
+        assertThat(proposed.get("fixPlan").get("runbookMitigation").asString()).startsWith("Runbook RB-001");
+
+        // No pull request before a person approves, and no tool that approves
+        assertThat(tool("gitDraftPullRequest", inv + "}").asString()).contains("PROPOSED, not APPROVED")
+                .contains("A person approves a plan outside this conversation");
+        assertThat(json.readTree(get("/api/tools").body())).extracting(t -> t.get("name").asString().toLowerCase())
+                .noneMatch(name -> name.contains("approve") || name.contains("merge"));
+        assertThat(postJson("/api/investigations/" + id + "/fix-plan/approve", "{\"reason\":\"Agreed with the card team\"}")
+                .statusCode()).isEqualTo(200);
+
+        JsonNode drafted = tool("gitDraftPullRequest", inv + "}");
+        JsonNode pr = drafted.get("pullRequest");
+        assertThat(pr.get("system").asString()).isEqualTo("mock");
+        assertThat(pr.get("branch").asString()).isEqualTo("rca/" + id.toLowerCase());
+        assertThat(pr.get("title").asString()).isEqualTo("[" + id + "] Restore the host authorization timeout to 2000ms");
+        // Asking again opens nothing new
+        assertThat(tool("gitDraftPullRequest", inv + "}").get("pullRequest").get("number")).isEqualTo(pr.get("number"));
+        String recorded = java.nio.file.Files.readString(java.nio.file.Path.of("build/test-data/pull-requests/mock-pull-requests.jsonl"));
+        assertThat(recorded.lines().filter(l -> l.contains(id)).count()).isEqualTo(1);
+        String body = json.readTree(recorded.lines().filter(l -> l.contains(id)).findFirst().orElseThrow()).get("body").asString();
+        assertThat(body).contains("## Cause (HIGH, evidence score 88)").contains("- E8 CHANGE: CHG0030101")
+                .contains("`timeout-ms: 500` -> `timeout-ms: 2000`").contains("- [ ] Withdrawal against the slow-host simulator succeeds")
+                .contains("approved by local");
+
+        // The whole story is in the history, and the plan is now fixed
+        assertThat(tool("investigationGet", inv + "}").get("history")).extracting(e -> e.get("action").asString())
+                .containsExactly("COLLECTED", "HYPOTHESES_RECORDED", "EVIDENCE_EXCLUDED", "EVIDENCE_RESTORED", "NOTE_ADDED",
+                        "FIX_PLAN_PROPOSED", "FIX_PLAN_APPROVED", "PULL_REQUEST_DRAFTED");
+        assertThat(tool("rcaRecordFixPlan", inv + plan + "\"blastRadiusComponents\":[\"withdrawal-p1\"]}}").asString())
+                .contains("already has pull request");
+    }
+
+    @Test
     void offersTheDailyBriefingPromptOverMcp() throws Exception {
         JsonNode prompts = mcp("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"prompts/list\"}").get("prompts");
-        assertThat(prompts).extracting(p -> p.get("name").asString()).containsExactly("daily_rca");
+        assertThat(prompts).extracting(p -> p.get("name").asString()).containsExactlyInAnyOrder("daily_rca",
+                "investigate_finding");
+
+        JsonNode investigate = mcp("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"prompts/get\",\"params\":{\"name\":"
+                + "\"investigate_finding\",\"arguments\":{\"rank\":\"2\"}}}");
+        assertThat(investigate.get("description").asString()).isEqualTo("Investigate a finding (investigate-finding/v1)");
+        assertThat(investigate.get("messages").get(0).get("content").get("text").asString())
+                .contains("rcaCollectEvidence").contains("rcaRecordHypotheses").endsWith("The finding to investigate is rank 2.");
 
         JsonNode prompt = mcp("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"prompts/get\",\"params\":{\"name\":\"daily_rca\","
                 + "\"arguments\":{}}}");

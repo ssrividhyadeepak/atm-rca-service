@@ -101,7 +101,7 @@ class SecurityTest {
         JsonNode metadata = json.readTree(send("GET", "/.well-known/oauth-protected-resource", null, null, null).body());
         assertThat(metadata.get("authorization_servers").get(0).asString()).isEqualTo(DevKeys.ISSUER);
         assertThat(metadata.get("scopes_supported").toString()).contains("rca:read", "rca:write", "logs:read", "kb:read",
-                "code:read", "change:read", "incident:read", "incident:write", "incident:approve");
+                "code:read", "change:read", "investigation:write", "investigation:approve", "pr:write", "incident:read", "incident:write", "incident:approve");
     }
 
     @Test
@@ -142,7 +142,7 @@ class SecurityTest {
         String kbOnly = token("kb-only", "kb:read");
 
         // Any valid token may list the tools
-        assertThat(json.readTree(send("GET", "/api/tools", kbOnly, null, null).body())).hasSize(9);
+        assertThat(json.readTree(send("GET", "/api/tools", kbOnly, null, null).body())).hasSize(16);
         assertThat(send("POST", "/api/tools/lookupRunbook", kbOnly, "{\"query\":\"LedgerPostingException\"}", null)
                 .statusCode()).isEqualTo(200);
 
@@ -266,7 +266,7 @@ class SecurityTest {
 
         // A valid token sees the tools; calling one needs that tool's scope
         String kbOnly = token("copilot-kb", "kb:read");
-        assertThat(result(mcp(kbOnly, list, null)).get("tools")).hasSize(9);
+        assertThat(result(mcp(kbOnly, list, null)).get("tools")).hasSize(16);
         JsonNode allowed = result(mcp(kbOnly, call("lookupRunbook", "{\"query\":\"LedgerPostingException\"}"), null));
         assertThat(allowed.path("isError").asBoolean()).isFalse();
         JsonNode denied = result(mcp(kbOnly, call("getFailureSummary", "{}"), null));
@@ -299,6 +299,57 @@ class SecurityTest {
             JsonNode finding = json.readTree(result(calls.get(i).get()).get("content").get(0).get("text").asString());
             assertThat(finding.get("rank").asInt()).isEqualTo(i + 1);
         }
+    }
+
+    @Test
+    void anAssistantCanProposeAFixButOnlyAPersonCanApproveIt() throws Exception {
+        String assistant = token("copilot-fix", "rca:read logs:read code:read change:read investigation:write pr:write");
+        String person = token("oncall.lee", "rca:read investigation:approve");
+        send("POST", "/api/runs", token("runner", "rca:write"), null, null);
+
+        // Collecting needs every scope of what it reads
+        HttpResponse<String> thin = send("POST", "/api/tools/rcaCollectEvidence", token("thin", "investigation:write"),
+                "{\"rank\":1}", null);
+        assertThat(thin.statusCode()).isEqualTo(403);
+        assertThat(thin.body()).contains("rcaCollectEvidence needs scope").contains("logs:read");
+
+        String id = json.readTree(send("POST", "/api/tools/rcaCollectEvidence", assistant, "{\"rank\":1}", null).body())
+                .get("id").asString();
+        String inv = "{\"investigationId\":\"" + id + "\"";
+        send("POST", "/api/tools/rcaRecordHypotheses", assistant, inv + ",\"hypotheses\":[{\"statement\":\"The timeout was "
+                + "lowered.\",\"evidenceIds\":[\"E3\",\"E8\"]}]}", null);
+        HttpResponse<String> planned = send("POST", "/api/tools/rcaRecordFixPlan", assistant, inv + ",\"hypothesisRank\":1,"
+                + "\"plan\":{\"summary\":\"Restore the timeout\",\"steps\":[\"Revert the setting\"],\"rollback\":\"Redeploy\","
+                + "\"testPlan\":[\"Withdrawals succeed\"],\"blastRadiusComponents\":[\"withdrawal-p1\"],"
+                + "\"blastRadius\":\"Withdrawals\"}}", null);
+        assertThat(planned.statusCode()).as(planned.body()).isEqualTo(200);
+        assertThat(json.readTree(planned.body()).get("fixPlan").get("proposedBy").asString()).isEqualTo("copilot-fix");
+
+        // The assistant's token cannot approve, and so cannot get a pull request
+        assertThat(send("POST", "/api/investigations/" + id + "/fix-plan/approve", assistant, "{}", null).statusCode())
+                .isEqualTo(403);
+        HttpResponse<String> early = send("POST", "/api/tools/gitDraftPullRequest", assistant, inv + "}", null);
+        assertThat(early.statusCode()).isEqualTo(400);
+        assertThat(early.body()).contains("not APPROVED");
+        // A person's token cannot open pull requests through the tool without pr:write
+        assertThat(send("POST", "/api/tools/gitDraftPullRequest", person, inv + "}", null).statusCode()).isEqualTo(403);
+
+        JsonNode approved = json.readTree(send("POST", "/api/investigations/" + id + "/fix-plan/approve", person, "{}", null).body());
+        assertThat(approved.get("fixPlan").get("status").asString()).isEqualTo("APPROVED");
+        assertThat(approved.get("fixPlan").get("decidedBy").asString()).isEqualTo("oncall.lee");
+        JsonNode drafted = json.readTree(send("POST", "/api/tools/gitDraftPullRequest", assistant, inv + "}", null).body());
+        assertThat(drafted.get("pullRequest").get("requestedBy").asString()).isEqualTo("copilot-fix");
+
+        // Whoever proposes a plan cannot approve it, even with the scope
+        String both = token("oncall.both", "rca:read logs:read code:read change:read investigation:write investigation:approve");
+        String own = json.readTree(send("POST", "/api/investigations", both, "{\"rank\":1}", null).body()).get("id").asString();
+        send("POST", "/api/investigations/" + own + "/hypotheses", both, "{\"hypotheses\":[{\"statement\":\"x\",\"evidenceIds\":[\"E3\"]}]}", null);
+        send("POST", "/api/investigations/" + own + "/fix-plan", both, "{\"hypothesisRank\":1,\"plan\":{\"summary\":\"s\","
+                + "\"steps\":[\"a\"],\"rollback\":\"r\",\"testPlan\":[\"t\"],\"blastRadiusComponents\":[\"withdrawal-p1\"],"
+                + "\"blastRadius\":\"b\"}}", null);
+        HttpResponse<String> self = send("POST", "/api/investigations/" + own + "/fix-plan/approve", both, "{}", null);
+        assertThat(self.statusCode()).isEqualTo(403);
+        assertThat(self.body()).contains("must be approved by someone else");
     }
 
     private static String call(String tool, String arguments) {

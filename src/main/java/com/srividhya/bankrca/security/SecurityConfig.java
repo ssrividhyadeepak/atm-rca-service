@@ -73,6 +73,14 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/knowledge", "/api/knowledge/**").hasAuthority(scope(Scopes.KB_READ))
                         .requestMatchers(HttpMethod.POST, "/api/source/locate").hasAuthority(scope(Scopes.CODE_READ))
                         .requestMatchers(HttpMethod.GET, "/api/source/suspects").hasAuthority(scope(Scopes.CODE_READ))
+                        .requestMatchers(HttpMethod.POST, "/api/investigations/*/fix-plan/approve",
+                                "/api/investigations/*/fix-plan/reject").hasAuthority(scope(Scopes.INVESTIGATION_APPROVE))
+                        .requestMatchers(HttpMethod.POST, "/api/investigations/*/pull-request").hasAuthority(scope(Scopes.PR_WRITE))
+                        .requestMatchers(HttpMethod.POST, "/api/investigations", "/api/investigations/*/hypotheses",
+                                "/api/investigations/*/fix-plan", "/api/investigations/*/evidence/*/exclude",
+                                "/api/investigations/*/evidence/*/restore", "/api/investigations/*/notes")
+                        .hasAuthority(scope(Scopes.INVESTIGATION_WRITE))
+                        .requestMatchers(HttpMethod.GET, "/api/investigations", "/api/investigations/*").hasAuthority(scope(Scopes.RCA_READ))
                         .requestMatchers(HttpMethod.GET, "/api/changes").hasAuthority(scope(Scopes.CHANGE_READ))
                         .requestMatchers(HttpMethod.POST, "/api/incidents/drafts").hasAuthority(scope(Scopes.INCIDENT_WRITE))
                         .requestMatchers(HttpMethod.POST, "/api/incidents/*/approve", "/api/incidents/*/reject",
