@@ -23,6 +23,9 @@ public class FakeServiceNow {
     public volatile String authorization;
     /** The status to answer a create with; 201 creates. */
     public volatile int createStatus = 201;
+    /** What the change_request table answers with, and with which status. */
+    public volatile String changes = "{\"result\":[]}";
+    public volatile int changeStatus = 200;
 
     public FakeServiceNow() {
         try {
@@ -56,6 +59,16 @@ public class FakeServiceNow {
             byte[] bytes = answer.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.createContext("/api/now/table/change_request", exchange -> {
+            authorization = exchange.getRequestHeaders().getFirst("Authorization");
+            requests.add(exchange.getRequestMethod() + " change_request " + exchange.getRequestURI().getQuery());
+            byte[] bytes = (changeStatus == 200 ? changes : "{\"error\":{\"message\":\"refused\"}}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(changeStatus, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });

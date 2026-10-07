@@ -384,8 +384,10 @@ class LocalModeTest {
         JsonNode tools = json.readTree(get("/api/tools").body());
 
         assertThat(tools).extracting(t -> t.get("name").asString())
-                .containsExactly("draftIncident", "getFailureSummary", "getFinding", "lookupRunbook", "searchHistoricalRca");
-        JsonNode lookup = tools.get(3);
+                .containsExactly("draftIncident", "getFailureSummary", "getFinding", "gitFindSuspects", "lookupRunbook",
+                        "searchHistoricalRca",
+                        "serviceNowRecentChanges", "splunkFindFailures", "splunkTraceRequest");
+        JsonNode lookup = tools.get(4);
         assertThat(lookup.get("description").asString()).startsWith("Find the runbook for a problem.").contains("NO_MATCH");
         // Input schema, generated from the method signature: what a model is given to fill in
         assertThat(lookup.get("inputSchema").get("type").asString()).isEqualTo("object");
@@ -514,7 +516,8 @@ class LocalModeTest {
 
         JsonNode tools = mcp("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}").get("tools");
         assertThat(tools).extracting(t -> t.get("name").asString()).containsExactlyInAnyOrder("getFailureSummary",
-                "getFinding", "lookupRunbook", "searchHistoricalRca", "draftIncident");
+                "getFinding", "lookupRunbook", "searchHistoricalRca", "draftIncident", "splunkFindFailures",
+                "splunkTraceRequest", "serviceNowRecentChanges", "gitFindSuspects");
         for (JsonNode t : tools) {
             assertThat(t.get("description").asString()).isNotBlank();
             assertThat(t.get("inputSchema").get("type").asString()).isEqualTo("object");
@@ -535,6 +538,141 @@ class LocalModeTest {
         JsonNode refused = mcp(mcpCall("getFinding", "{\"rank\":99}"));
         assertThat(refused.get("isError").asBoolean()).isTrue();
         assertThat(refused.get("content").get(0).get("text").asString()).contains("'rank' must be between 1 and 8");
+    }
+
+    @Test
+    void findsFailuresAndFollowsOneAcrossComponents() throws Exception {
+        JsonNode found = json.readTree(postJson("/api/tools/splunkFindFailures",
+                "{\"exception\":\"HostAuthTimeoutException\",\"limit\":3}").body());
+        assertThat(found.get("total").asInt()).isEqualTo(64);
+        assertThat(found.get("signals")).hasSize(3);
+        JsonNode signal = found.get("signals").get(0);
+        assertThat(signal.get("component").asString()).isEqualTo("withdrawal-p1");
+        assertThat(signal.get("transaction").asString()).isEqualTo("cash-withdrawal");
+
+        JsonNode trace = json.readTree(get("/api/traces/" + signal.get("traceId").asString()).body());
+
+        assertThat(trace.get("outcome").asString()).isEqualTo("FAILED");
+        assertThat(trace.get("transaction").asString()).isEqualTo("cash-withdrawal");
+        assertThat(trace.get("components")).extracting(JsonNode::asString).containsExactly("gateway-p1", "withdrawal-p1",
+                "fraud-p1");
+        assertThat(trace.get("steps")).extracting(st -> st.get("kind").asString()).containsExactly("IN", "IN", "OUT", "IN",
+                "RESP", "OUT_RESP", "OUT", "OUT_RESP", "OUT", "OUT_RESP", "EXCEPTION", "RESP", "RESP");
+        // Each call is paired with its answer: fraud answered, the host gateway timed out twice
+        assertThat(trace.get("calls")).extracting(c -> c.get("target").asString() + " " + c.get("outcome").asString())
+                .containsExactly("fraud-p1 OK", "host-auth-gateway FAILED", "host-auth-gateway FAILED");
+        JsonNode divergence = trace.get("divergence");
+        assertThat(divergence.get("type").asString()).isEqualTo("TIMEOUT");
+        assertThat(divergence.get("where").asString()).isEqualTo("withdrawal-p1 -> host-auth-gateway");
+        assertThat(divergence.get("step").asInt()).isEqualTo(7);
+        // Bodies keep their shape; the card and account numbers do not leave the service
+        JsonNode received = trace.get("steps").get(0).get("payload");
+        assertThat(received.get("pan").asString()).isEqualTo("***");
+        assertThat(received.get("accountNumber").asString()).isEqualTo("***");
+        assertThat(received.get("currency").asString()).isEqualTo("USD");
+        assertThat(trace.toString()).doesNotContain("4111111111111111");
+        // The same amount is seen at every hop
+        assertThat(trace.get("steps").get(6).get("payload").get("amount")).isEqualTo(received.get("amount"));
+    }
+
+    @Test
+    void aTraceShowsTheNullThatArrivedInTheRequest() throws Exception {
+        JsonNode found = json.readTree(postJson("/api/tools/splunkFindFailures",
+                "{\"exception\":\"java.lang.NullPointerException\",\"component\":\"deposit-p1\",\"limit\":1}").body());
+
+        JsonNode trace = json.readTree(mcp(mcpCall("splunkTraceRequest",
+                "{\"traceId\":\"" + found.get("signals").get(0).get("traceId").asString() + "\"}"))
+                .get("content").get(0).get("text").asString());
+
+        assertThat(trace.get("divergence").get("type").asString()).isEqualTo("NULL_FIELD");
+        assertThat(trace.get("divergence").get("detail").asString())
+                .isEqualTo("\"envelope\" was null in deposit-p1; the request it received (step 1) already carried \"envelope\": null");
+        assertThat(trace.get("steps").get(1).get("payload").get("envelope").isNull()).isTrue();
+        assertThat(trace.get("calls")).isEmpty();
+    }
+
+    @Test
+    void traceRequestsAreValidated() throws Exception {
+        assertThat(get("/api/traces/nope").statusCode()).isEqualTo(400);
+        assertThat(get("/api/traces/00000000-0000-0000-0000-000000000000").statusCode()).isEqualTo(404);
+
+        JsonNode unknown = mcp(mcpCall("splunkTraceRequest", "{\"traceId\":\"00000000-0000-0000-0000-000000000000\"}"));
+        assertThat(unknown.get("isError").asBoolean()).isTrue();
+        assertThat(unknown.get("content").get(0).get("text").asString()).contains("matched nothing")
+                .contains("splunkFindFailures");
+        HttpResponse<String> tooMany = postJson("/api/tools/splunkFindFailures", "{\"limit\":500}");
+        assertThat(tooMany.statusCode()).isEqualTo(400);
+        assertThat(tooMany.body()).contains("'limit' must be between 1 and 50");
+    }
+
+    @Test
+    void listsTheChangesAroundAFailureClosestBeforeItFirst() throws Exception {
+        JsonNode plain = json.readTree(get("/api/changes?component=withdrawal-p1").body());
+        // Without a failure time: newest first, no timing
+        assertThat(plain.get("changes")).extracting(c -> c.get("change").get("number").asString())
+                .containsExactly("CHG0030107", "CHG0030101", "CHG0030094");
+        assertThat(plain.get("changes").get(0).get("timing").isNull()).isTrue();
+        assertThat(plain.get("source").asString()).startsWith("sample changes from");
+
+        // The timeout burst in the sample data starts 10.8 hours before now
+        String burst = java.time.Instant.parse(plain.get("to").asString()).minusSeconds(38880).toString();
+        JsonNode timed = json.readTree(mcp(mcpCall("serviceNowRecentChanges",
+                "{\"component\":\"withdrawal-p1\",\"failureTime\":\"" + burst + "\"}")).get("content").get(0).get("text")
+                .asString());
+
+        assertThat(timed.get("changes")).extracting(c -> c.get("change").get("number").asString() + " " + c.get("timing").asString())
+                .containsExactly("CHG0030101 BEFORE_FAILURE", "CHG0030094 BEFORE_FAILURE", "CHG0030107 AFTER_FAILURE");
+        JsonNode suspect = timed.get("changes").get(0);
+        assertThat(suspect.get("minutesBeforeFailure").asInt()).isEqualTo(18);
+        assertThat(suspect.get("timingNote").asString()).isEqualTo("finished 18 min before the failures began");
+        assertThat(suspect.get("change").get("shortDescription").asString())
+                .isEqualTo("Lower host authorization timeout from 2000ms to 500ms");
+        // Free text written by people is masked
+        assertThat(suspect.get("change").get("description").asString()).doesNotContain("release.lead@example.com");
+
+        assertThat(json.readTree(get("/api/changes?component=balance-p1").body()).get("changes")).isEmpty();
+        assertThat(get("/api/changes?component=a%5Eb").statusCode()).isEqualTo(400);
+        assertThat(get("/api/changes?component=withdrawal-p1&failureTime=yesterday").statusCode()).isEqualTo(400);
+        JsonNode refused = mcp(mcpCall("serviceNowRecentChanges", "{\"component\":\"withdrawal-p1\",\"hours\":9999}"));
+        assertThat(refused.get("isError").asBoolean()).isTrue();
+    }
+
+    @Test
+    void ranksTheCommitsBeforeAFailureAsSuspects() throws Exception {
+        String now = json.readTree(get("/api/changes?component=withdrawal-p1").body()).get("to").asString();
+        // The timeout burst in the sample data starts 10.8 hours before now
+        String burst = java.time.Instant.parse(now).minusSeconds(38880).toString();
+
+        JsonNode found = json.readTree(mcp(mcpCall("gitFindSuspects", "{\"component\":\"withdrawal-p1\",\"failureTime\":\""
+                + burst + "\",\"failingClass\":\"com.example.bank.withdrawal.host.HostAuthClient\"}")).get("content").get(0)
+                .get("text").asString());
+
+        // The old import is outside the week; the three recent commits are ranked
+        assertThat(found.get("considered").asInt()).isEqualTo(3);
+        assertThat(found.get("suspects")).extracting(s -> s.get("hash").asString() + " " + s.get("score").asInt())
+                .containsExactly("a9aa3e8f10 90", "c0ffee4d21 65", "d0c5a1b2c3 50");
+        JsonNode top = found.get("suspects").get(0);
+        assertThat(top.get("rank").asInt()).isEqualTo(1);
+        assertThat(top.get("minutesBeforeFailure").asInt()).isEqualTo(72);
+        assertThat(top.get("kinds")).extracting(JsonNode::asString).containsExactly("CODE", "TEST");
+        assertThat(top.get("reasons")).extracting(JsonNode::asString).containsExactly(
+                "committed 72 min before the failures began (+40)", "changes the failing class HostAuthClient (+35)",
+                "changes what runs: CODE (+15)");
+        // The config change names its change request; the docs commit is closest in time but cannot change behaviour
+        JsonNode config = found.get("suspects").get(1);
+        assertThat(config.get("kinds").get(0).asString()).isEqualTo("CONFIG");
+        assertThat(config.get("changeNumber").asString()).isEqualTo("CHG0030101");
+        JsonNode docs = found.get("suspects").get(2);
+        assertThat(docs.get("pullRequest").asString()).isEqualTo("#412");
+        assertThat(docs.get("reasons").get(1).asString()).isEqualTo("only docs: cannot change behaviour (+0)");
+        assertThat(found.get("note").asString()).contains("not when it was deployed");
+
+        // Another component's commits are not offered
+        JsonNode other = json.readTree(get("/api/source/suspects?component=balance-p1&failureTime=" + burst).body());
+        assertThat(other.get("suspects")).isEmpty();
+        assertThat(get("/api/source/suspects?component=withdrawal-p1&failureTime=soon").statusCode()).isEqualTo(400);
+        assertThat(get("/api/source/suspects?component=withdrawal-p1&failureTime=2999-01-01T00:00:00Z").statusCode())
+                .isEqualTo(400);
     }
 
     @Test

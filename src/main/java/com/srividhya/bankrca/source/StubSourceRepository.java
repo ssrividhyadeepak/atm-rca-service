@@ -11,7 +11,10 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -45,9 +48,11 @@ public class StubSourceRepository implements SourceRepository {
      * @param lineCount how long the real file would be; a frame beyond it is reported as a version mismatch
      * @param blocks the parts of the file that are spelled out
      * @param commits the file's history, in any order
+     * @param components the containers this file belongs to ('*' is a wildcard); any when left out.
+     *        className may be left out for a file that is not a class, such as a config file
      */
     public record StubFile(String className, String path, Integer lineCount, List<Block> blocks,
-            List<StubCommit> commits) {
+            List<StubCommit> commits, List<String> components) {
     }
 
     /** Consecutive lines of the file, starting at line {@code start}. */
@@ -134,6 +139,34 @@ public class StubSourceRepository implements SourceRepository {
                 commits.isEmpty() ? null : commits.get(0), commits.stream().limit(3).toList());
     }
 
+    @Override
+    public List<CommitChange> commits(String component, Instant from, Instant to, int limit) {
+        StubSource source = load();
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MINUTES);
+        // The file lists commits per file; here they are wanted per commit
+        Map<String, StubCommit> byHash = new LinkedHashMap<>();
+        Map<String, List<String>> files = new LinkedHashMap<>();
+        for (StubFile f : source.files()) {
+            boolean belongs = f.components() == null || component == null || f.components().stream()
+                    .anyMatch(p -> component.matches(Pattern.quote(p).replace("*", "\\E.*\\Q")));
+            if (!belongs) {
+                continue;
+            }
+            for (StubCommit c : f.commits() == null ? List.<StubCommit>of() : f.commits()) {
+                byHash.putIfAbsent(c.hash(), c);
+                files.computeIfAbsent(c.hash(), h -> new ArrayList<>()).add(f.path());
+            }
+        }
+        return byHash.values().stream()
+                .map(c -> new CommitChange(source.repository(), source.ref(), c.hash(),
+                        now.minusSeconds((long) ((c.hoursAgo() == null ? 0 : c.hoursAgo()) * 3600)).toString(), c.author(),
+                        c.message(), files.get(c.hash()), files.get(c.hash()).size()))
+                .filter(c -> !Instant.parse(c.time()).isBefore(from) && !Instant.parse(c.time()).isAfter(to))
+                .sorted(Comparator.comparing(CommitChange::time).reversed())
+                .limit(limit)
+                .toList();
+    }
+
     private String where() {
         return Files.isRegularFile(file) ? file.toString() : "the built-in " + BUNDLED;
     }
@@ -156,9 +189,9 @@ public class StubSourceRepository implements SourceRepository {
             }
             for (int i = 0; i < source.files().size(); i++) {
                 StubFile f = source.files().get(i);
-                if (f.className() == null || f.path() == null) {
+                if (f.path() == null) {
                     throw new IllegalStateException(where() + " is not valid: file #" + (i + 1)
-                            + ": 'className' and 'path' are required");
+                            + ": 'path' is required");
                 }
             }
             return source;

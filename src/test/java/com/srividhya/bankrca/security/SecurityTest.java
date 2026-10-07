@@ -101,7 +101,7 @@ class SecurityTest {
         JsonNode metadata = json.readTree(send("GET", "/.well-known/oauth-protected-resource", null, null, null).body());
         assertThat(metadata.get("authorization_servers").get(0).asString()).isEqualTo(DevKeys.ISSUER);
         assertThat(metadata.get("scopes_supported").toString()).contains("rca:read", "rca:write", "logs:read", "kb:read",
-                "code:read", "incident:read", "incident:write", "incident:approve");
+                "code:read", "change:read", "incident:read", "incident:write", "incident:approve");
     }
 
     @Test
@@ -142,7 +142,7 @@ class SecurityTest {
         String kbOnly = token("kb-only", "kb:read");
 
         // Any valid token may list the tools
-        assertThat(json.readTree(send("GET", "/api/tools", kbOnly, null, null).body())).hasSize(5);
+        assertThat(json.readTree(send("GET", "/api/tools", kbOnly, null, null).body())).hasSize(9);
         assertThat(send("POST", "/api/tools/lookupRunbook", kbOnly, "{\"query\":\"LedgerPostingException\"}", null)
                 .statusCode()).isEqualTo(200);
 
@@ -266,7 +266,7 @@ class SecurityTest {
 
         // A valid token sees the tools; calling one needs that tool's scope
         String kbOnly = token("copilot-kb", "kb:read");
-        assertThat(result(mcp(kbOnly, list, null)).get("tools")).hasSize(5);
+        assertThat(result(mcp(kbOnly, list, null)).get("tools")).hasSize(9);
         JsonNode allowed = result(mcp(kbOnly, call("lookupRunbook", "{\"query\":\"LedgerPostingException\"}"), null));
         assertThat(allowed.path("isError").asBoolean()).isFalse();
         JsonNode denied = result(mcp(kbOnly, call("getFailureSummary", "{}"), null));

@@ -18,6 +18,12 @@ public interface SplunkClient {
     String FAILED_TRANSACTIONS = "failed_transactions";
 
     /**
+     * Every event of one request, whatever component logged it and whether it failed or not.
+     * Args: namespace, traceId, limit. Row: ts and _raw, oldest first.
+     */
+    String TRACE_EVENTS = "trace_events";
+
+    /**
      * @param args values are a String or a List of Strings
      * @return one map per result row, oldest first
      */

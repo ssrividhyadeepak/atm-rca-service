@@ -127,6 +127,14 @@ rca:
       password: ${SERVICENOW_PASSWORD:}
       token: ${SERVICENOW_TOKEN:}
       timeout: 30s
+  change:
+    # stub = sample changes from a file; servicenow = the change_request table, read-only,
+    # using the ServiceNow connection above
+    mode: ${RCA_CHANGE_MODE:stub}
+    stub-file: ${RCA_STUB_CHANGE_FILE:config/stub-changes.json}
+    # Only for components whose configuration item in ServiceNow has a different name
+    # than the container in the logs, e.g. withdrawal-p1: "Withdrawal Service"
+    ci-names: {}
   # Where logs/audit.log, the record of every tool call, is written
   log-dir: ${RCA_LOG_DIR:logs}
   # Where each day's analyzer input is written: daily-rca-input-<day>.json, and the latest
@@ -196,6 +204,13 @@ rca:
       failed_transactions: >-
         search index=$index$ "*exception*" kubernetes.namespace_name="$namespace$"
         kubernetes.container_name IN ($components$)
+        | sort 0 _time
+        | head $limit$
+        | eval ts=_time
+        | table ts _raw
+      # Every event of one request, by any component. $traceId$ is validated before use.
+      trace_events: >-
+        search index=$index$ kubernetes.namespace_name="$namespace$" "$traceId$"
         | sort 0 _time
         | head $limit$
         | eval ts=_time

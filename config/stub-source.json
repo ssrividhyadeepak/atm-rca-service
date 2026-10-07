@@ -32,7 +32,9 @@
           "hoursAgo": 12,
           "author": "alex.ng",
           "message": "withdrawal: lower host auth timeout for faster failover",
-          "lines": [9]
+          "lines": [
+            9
+          ]
         },
         {
           "hash": "7dd6e39ef8",
@@ -40,6 +42,9 @@
           "author": "priya.raman",
           "message": "withdrawal-service: initial import"
         }
+      ],
+      "components": [
+        "withdrawal-*"
       ]
     },
     {
@@ -68,6 +73,9 @@
           "author": "priya.raman",
           "message": "withdrawal-service: initial import"
         }
+      ],
+      "components": [
+        "withdrawal-*"
       ]
     },
     {
@@ -98,7 +106,15 @@
           "hoursAgo": 120,
           "author": "mei.tanaka",
           "message": "deposit: reject envelopes in unsupported currencies",
-          "lines": [11, 33, 34, 35, 36, 37, 38]
+          "lines": [
+            11,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38
+          ]
         },
         {
           "hash": "a7ab4c1e02",
@@ -106,6 +122,9 @@
           "author": "mei.tanaka",
           "message": "deposit-service: initial import"
         }
+      ],
+      "components": [
+        "deposit-*"
       ]
     },
     {
@@ -131,6 +150,9 @@
           "author": "mei.tanaka",
           "message": "deposit-service: initial import"
         }
+      ],
+      "components": [
+        "deposit-*"
       ]
     },
     {
@@ -155,6 +177,51 @@
           "hoursAgo": 900,
           "author": "sam.osei",
           "message": "inquiry: add core banking client"
+        }
+      ],
+      "components": [
+        "balance-*"
+      ]
+    },
+    {
+      "path": "withdrawal-service/src/main/resources/application.yml",
+      "components": [
+        "withdrawal-*"
+      ],
+      "commits": [
+        {
+          "hash": "c0ffee4d21",
+          "hoursAgo": 11.5,
+          "author": "alex.ng",
+          "message": "withdrawal: host.auth.timeout-ms 2000 -> 500 (CHG0030101)"
+        }
+      ]
+    },
+    {
+      "path": "withdrawal-service/README.md",
+      "components": [
+        "withdrawal-*"
+      ],
+      "commits": [
+        {
+          "hash": "d0c5a1b2c3",
+          "hoursAgo": 11.0,
+          "author": "sam.lee",
+          "message": "docs: update runbook link (#412)"
+        }
+      ]
+    },
+    {
+      "path": "withdrawal-service/src/test/java/com/example/bank/withdrawal/host/HostAuthClientTest.java",
+      "components": [
+        "withdrawal-*"
+      ],
+      "commits": [
+        {
+          "hash": "a9aa3e8f10",
+          "hoursAgo": 12,
+          "author": "alex.ng",
+          "message": "withdrawal: lower host auth timeout for faster failover"
         }
       ]
     }

@@ -1,0 +1,89 @@
+{
+  "note": "Sample change requests for stub mode. Times are hours before now, so they line up with the sample failures in stub-failures.json. Edit and ask again: the file is read on every call.",
+  "changes": [
+    {
+      "number": "CHG0030101",
+      "component": "withdrawal-p1",
+      "service": "withdrawal-p1",
+      "type": "Standard",
+      "state": "Closed",
+      "risk": "Low",
+      "shortDescription": "Lower host authorization timeout from 2000ms to 500ms",
+      "description": "Config-only change to withdrawal-p1: host.auth.timeout-ms 2000 -> 500 to free worker threads faster during host slowness. Rollback: restore the previous config map. Contact: release.lead@example.com",
+      "assignmentGroup": "Card Platform",
+      "startedHoursAgo": 11.3,
+      "endedHoursAgo": 11.1,
+      "closeCode": "Successful"
+    },
+    {
+      "number": "CHG0030094",
+      "component": "withdrawal-p1",
+      "service": "withdrawal-p1",
+      "type": "Normal",
+      "state": "Closed",
+      "risk": "Moderate",
+      "shortDescription": "Deploy withdrawal-p1 4.7.2: cassette inventory reporting",
+      "description": "Routine release. Adds cassette inventory counters to the dispense flow. No change to host authorization.",
+      "assignmentGroup": "Card Platform",
+      "startedHoursAgo": 52.0,
+      "endedHoursAgo": 51.5,
+      "closeCode": "Successful"
+    },
+    {
+      "number": "CHG0030107",
+      "component": "withdrawal-p1",
+      "service": "withdrawal-p1",
+      "type": "Emergency",
+      "state": "Implement",
+      "risk": "Low",
+      "shortDescription": "Restore host authorization timeout to 2000ms",
+      "description": "Reverts CHG0030101 after the timeout burst.",
+      "assignmentGroup": "Card Platform",
+      "startedHoursAgo": 8.3,
+      "endedHoursAgo": 8.2,
+      "closeCode": null
+    },
+    {
+      "number": "CHG0030103",
+      "component": "deposit-p1",
+      "service": "deposit-p1",
+      "type": "Normal",
+      "state": "Closed",
+      "risk": "Moderate",
+      "shortDescription": "Deploy deposit-p1 2.14.0: envelope validation refactor",
+      "description": "Moves envelope validation out of the controller into EnvelopeValidator. Envelope-less deposits are expected to be rejected by the gateway before they reach the service.",
+      "assignmentGroup": "Deposits",
+      "startedHoursAgo": 5.4,
+      "endedHoursAgo": 5.0,
+      "closeCode": "Successful"
+    },
+    {
+      "number": "CHG0030099",
+      "component": "ledger-p1",
+      "service": "ledger-p1",
+      "type": "Normal",
+      "state": "Closed",
+      "risk": "High",
+      "shortDescription": "Ledger database maintenance: index rebuild",
+      "description": "Planned maintenance. Posting is unavailable in short intervals while indexes are rebuilt; callers are expected to retry.",
+      "assignmentGroup": "Core Ledger",
+      "startedHoursAgo": 24.5,
+      "endedHoursAgo": 0.5,
+      "closeCode": "Successful"
+    },
+    {
+      "number": "CHG0030088",
+      "component": "gateway-p1",
+      "service": "gateway-p1",
+      "type": "Standard",
+      "state": "Closed",
+      "risk": "Low",
+      "shortDescription": "Renew TLS certificate on gateway-p1",
+      "description": "Annual certificate renewal. No application change.",
+      "assignmentGroup": "Platform Engineering",
+      "startedHoursAgo": 60.0,
+      "endedHoursAgo": 59.7,
+      "closeCode": "Successful"
+    }
+  ]
+}

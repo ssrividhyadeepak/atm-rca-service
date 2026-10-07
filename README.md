@@ -272,6 +272,120 @@ curl -s -X POST http://localhost:8090/api/tools/lookupRunbook -H "Content-Type: 
 - **Audit:** every call is one JSON line in `logs/audit.log`: time, call id, tool, masked
   arguments, duration and outcome (`OK`, `REJECTED` or `ERROR`).
 
+### Following one request across services
+
+Two tools start an investigation of a single failed transaction (branch `feature/rca-agent-mcp`,
+plan in [docs/agent-enhancement.md](docs/agent-enhancement.md)):
+
+| Tool | Scope | What it returns |
+|---|---|---|
+| `splunkFindFailures` | `logs:read` | Recent failures, newest first, each with its trace id. Filters: `hours`, `transaction`, `component`, `bankId`, `exception`, `limit` |
+| `splunkTraceRequest` | `logs:read` | Every log line of one trace id, in time order, across components |
+
+```bash
+curl -s -X POST localhost:8090/api/tools/splunkFindFailures \
+  -H 'Content-Type: application/json' -d '{"exception":"HostAuthTimeoutException","limit":3}'
+```
+
+```bash
+curl -s localhost:8090/api/traces/TRACE_ID_FROM_ABOVE
+```
+
+A trace has:
+
+- `steps`: each line as `IN` (request received), `OUT` (call to a dependency), `OUT_RESP`
+  (its answer), `RESP` (response sent), `EXCEPTION` or `LOG`, with component, status,
+  latency and the logged body.
+- `calls`: each `OUT` paired with its `OUT_RESP`, as `OK`, `FAILED` or `NO_RESPONSE`.
+- `divergence`: where the request left the normal path, decided by fixed rules in
+  `TraceService`, not by a model: `TIMEOUT`, `DOWNSTREAM_ERROR`, `DECLINED`, `NULL_FIELD`,
+  `MISSING_FIELD` or `EXCEPTION`, with the step that shows it.
+
+Bodies are masked by `PayloadMasker` before they leave the service: any field whose name
+contains `pan`, `card`, `account`, `email`, `phone`, `ssn`, `pin`, `token` and similar becomes
+`***`, and every other string still goes through the pattern masker. Field names and nulls
+are kept, because a null in a request is the evidence.
+
+In stub mode the lines come from the `trace` list of an entry in `config/stub-failures.json`
+(`{amount}` is one value for the whole request, `{bankId}` the entry's bank id). In live mode
+the `trace_events` search in `application.yml` fetches every event carrying the trace id.
+
+**Assumption to check against real logs:** the step kinds are read from lines that start
+`IN ...`, `OUT <target> <operation> ...`, `OUT_RESP <target> <operation> status=...`,
+`RESP status=...`, with an optional ` payload={json}`. The real applications will log this
+differently; the patterns at the top of `TraceService` are the one place to change. Lines
+that do not match still appear in the trace as `LOG`, and exceptions are always recognised.
+
+### What changed: change requests
+
+`serviceNowRecentChanges` (scope `change:read`) lists the change requests for one component
+and, given the time the failures started, how each sits against it:
+
+```bash
+curl -s "localhost:8090/api/changes?component=withdrawal-p1&hours=72&failureTime=2026-10-06T19:00:00Z"
+```
+
+| `timing` | Meaning |
+|---|---|
+| `BEFORE_FAILURE` | Finished before the failures began; `minutesBeforeFailure` says how long. Listed closest first |
+| `DURING_FAILURE_START` | In progress when they began |
+| `AFTER_FAILURE` | Started later, so it is not the cause (often the fix or the rollback) |
+
+The timing is arithmetic done in `ChangeService`; whether a change is the cause is left to
+the reader. Descriptions are masked and cut to 600 characters.
+
+| Mode | Set | Reads from |
+|---|---|---|
+| stub (default, also with the prod profile) | nothing | `config/stub-changes.json`, read on every call; times are hours before now |
+| real | `RCA_CHANGE_MODE=servicenow` and the `SERVICENOW_*` settings | ServiceNow's `change_request` table |
+
+ServiceNow's Table API is ordinary REST: one URL per table, `/api/now/table/<table>`, with
+the filter in `sysparm_query`. The real client makes one `GET` and writes nothing:
+
+```
+GET /api/now/table/change_request
+    ?sysparm_query=cmdb_ci.nameIN<names>^start_date<=<to>^end_date>=<from>^ORDERBYDESCstart_date
+    &sysparm_fields=number,short_description,description,type,state,risk,cmdb_ci,assignment_group,start_date,end_date,work_start,work_end,close_code
+    &sysparm_display_value=all&sysparm_limit=50
+```
+
+**To check on the real instance:** a change is matched by its configuration item's name.
+Where that differs from the container name in the logs, map it under `rca.change.ci-names`
+in `application.yml` (for example `withdrawal-p1: "Withdrawal Service"`). The account needs
+read access to `change_request` (role `itil` or `sn_change_read`); it uses the same
+connection settings as incident submission, and turning this on does not turn that on.
+
+### Which commit: ranked suspects
+
+`gitFindSuspects` (scope `code:read`) lists the commits that reached the deployed branch
+before a failure began and ranks them:
+
+```bash
+curl -s "localhost:8090/api/source/suspects?component=withdrawal-p1&failureTime=2026-10-06T19:00:00Z&failingClass=com.example.bank.withdrawal.host.HostAuthClient"
+```
+
+| Points | For |
+|---|---|
+| 50 / 40 / 30 / 18 / 8 / 3 | Committed within 1 hour / 6 hours / 1 day / 3 days / 7 days / longer before the failure |
+| 35 | Changes the failing class (`failingClass`, the first application frame of the stack trace) |
+| 15 | Changes what runs: code, config or build files. A commit of only tests or docs gets 0 |
+
+Each suspect carries its `score`, the `reasons` behind it, the files changed, their `kinds`
+(`CODE`, `CONFIG`, `BUILD`, `TEST`, `DOCS`), and the pull request (`#412`) or change number
+(`CHG0030101`) when the commit message names one. The rules are in `SuspectService`; the
+weights are a first guess and have not been tuned on real incidents.
+
+Two limits to keep in mind:
+
+- **Commit time is not deployment time.** A commit is a suspect only if it was deployed
+  before the failure; `serviceNowRecentChanges` is the check.
+- **Pull requests are read from commit messages only.** JGit sees the repository, not the
+  git host, so titles, reviewers and approvals are not available.
+
+In stub mode commits come from `config/stub-source.json` (a file entry may now leave out
+`className`, for a config file, and may list the `components` it belongs to). In git mode
+they are read from the deployed ref of the repositories configured for the component.
+
 ### The assistant
 
 `POST /api/assistant/ask` answers a question by letting a chat model call those tools. The
@@ -398,6 +512,7 @@ With `dev` and `jwt` the token's signature, expiry, issuer and audience
 | `logs:read` | `/api/failures`: the failure events themselves |
 | `kb:read` | Knowledge search; the `lookupRunbook` and `searchHistoricalRca` tools |
 | `code:read` | `/api/source/locate` |
+| `change:read` | Change requests |
 | `incident:read` | Incident drafts and what became of them |
 | `incident:write` | Drafting an incident; the `draftIncident` tool. Sends nothing |
 | `incident:approve` | Approving or rejecting a draft. Approval creates the incident: for people, not assistants |

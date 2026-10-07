@@ -65,13 +65,15 @@ public class SecurityConfig {
                         // internal forward; without this it would be reported as 403 instead of what it is
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health/**", "/.well-known/oauth-protected-resource/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/failures").hasAuthority(scope(Scopes.LOGS_READ))
+                        .requestMatchers(HttpMethod.GET, "/api/failures", "/api/traces/*").hasAuthority(scope(Scopes.LOGS_READ))
                         .requestMatchers(HttpMethod.POST, "/api/runs", "/api/rca", "/api/rca/replay", "/api/knowledge/reload")
                         .hasAuthority(scope(Scopes.RCA_WRITE))
                         .requestMatchers(HttpMethod.GET, "/api/runs", "/api/correlation", "/api/rca", "/api/rca/**")
                         .hasAuthority(scope(Scopes.RCA_READ))
                         .requestMatchers(HttpMethod.GET, "/api/knowledge", "/api/knowledge/**").hasAuthority(scope(Scopes.KB_READ))
                         .requestMatchers(HttpMethod.POST, "/api/source/locate").hasAuthority(scope(Scopes.CODE_READ))
+                        .requestMatchers(HttpMethod.GET, "/api/source/suspects").hasAuthority(scope(Scopes.CODE_READ))
+                        .requestMatchers(HttpMethod.GET, "/api/changes").hasAuthority(scope(Scopes.CHANGE_READ))
                         .requestMatchers(HttpMethod.POST, "/api/incidents/drafts").hasAuthority(scope(Scopes.INCIDENT_WRITE))
                         .requestMatchers(HttpMethod.POST, "/api/incidents/*/approve", "/api/incidents/*/reject",
                                 "/api/incidents/*/submit").hasAuthority(scope(Scopes.INCIDENT_APPROVE))

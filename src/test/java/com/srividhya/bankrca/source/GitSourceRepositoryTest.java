@@ -173,4 +173,32 @@ class GitSourceRepositoryTest {
 
         assertThat(props.toString()).doesNotContain("ghp_secret");
     }
+
+    @Test
+    void listsTheCommitsOfTheDeployedRefInAWindowWithTheirFiles() throws Exception {
+        try (TestRepo remote = payments()) {
+            remote.commit("payments/src/main/resources/application.yml", "timeout: 500\n", "alex", "2026-10-03T10:00:00Z",
+                    "config: timeout (CHG0041001)");
+            GitSourceRepository git = new GitSourceRepository(single(remote.dir().toString(), null, "main"));
+
+            List<CommitChange> commits = git.commits("payments-p1", java.time.Instant.parse("2026-09-01T00:00:00Z"),
+                    java.time.Instant.parse("2026-10-03T12:00:00Z"), 10);
+
+            // Newest first; the August import is outside the window
+            assertThat(commits).extracting(CommitChange::message).containsExactly("config: timeout (CHG0041001)",
+                    "add metrics", "lower host timeout");
+            assertThat(commits.get(0).files()).containsExactly("payments/src/main/resources/application.yml");
+            assertThat(commits.get(0).time()).isEqualTo("2026-10-03T10:00:00Z");
+            assertThat(commits.get(2).files()).containsExactly(HOST_CLIENT);
+            assertThat(commits.get(2).author()).isEqualTo("alex");
+
+            SuspectService suspects = new SuspectService(git, new com.srividhya.bankrca.security.PiiMasker());
+            SuspectService.SuspectSearch found = suspects.find("payments-p1", java.time.Instant.parse("2026-10-03T10:30:00Z"),
+                    Duration.ofDays(7), "com.acme.host.HostClient");
+            assertThat(found.suspects()).extracting(s -> s.message() + " " + s.score()).containsExactly(
+                    // Both code commits are over a day old (18) and change the class (35) and code (15);
+                    // the config commit is 30 minutes old (50) and changes config (15)
+                    "add metrics 68", "lower host timeout 68", "config: timeout (CHG0041001) 65");
+        }
+    }
 }

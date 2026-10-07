@@ -27,7 +27,143 @@
       ],
       "count": 64,
       "fromHoursAgo": 10.8,
-      "toHoursAgo": 8.4
+      "toHoursAgo": 8.4,
+      "trace": [
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.RequestLogFilter",
+          "kind": "IN",
+          "text": "POST /v1/withdrawals",
+          "offsetMs": -1180,
+          "payload": {
+            "amount": "{amount}",
+            "currency": "USD",
+            "pan": "4111111111111111",
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.api.WithdrawalController",
+          "kind": "IN",
+          "text": "POST /v1/withdrawals",
+          "offsetMs": -1172,
+          "payload": {
+            "amount": "{amount}",
+            "currency": "USD",
+            "pan": "4111111111111111",
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.fraud.FraudClient",
+          "kind": "OUT",
+          "text": "fraud-p1 score",
+          "offsetMs": -1165,
+          "payload": {
+            "pan": "4111111111111111",
+            "amount": "{amount}"
+          }
+        },
+        {
+          "component": "fraud-p1",
+          "logger": "com.example.bank.fraud.api.ScoreController",
+          "kind": "IN",
+          "text": "POST /v1/score",
+          "offsetMs": -1160,
+          "payload": {
+            "pan": "4111111111111111",
+            "amount": "{amount}"
+          }
+        },
+        {
+          "component": "fraud-p1",
+          "logger": "com.example.bank.fraud.api.ScoreController",
+          "kind": "RESP",
+          "text": "status=200 latencyMs=28",
+          "offsetMs": -1132,
+          "payload": {
+            "decision": "ALLOW",
+            "score": "{int:3-20}"
+          }
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.fraud.FraudClient",
+          "kind": "OUT_RESP",
+          "text": "fraud-p1 score status=200 latencyMs=35",
+          "offsetMs": -1128,
+          "payload": {
+            "decision": "ALLOW",
+            "score": "{int:3-20}"
+          }
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.host.HostAuthClient",
+          "kind": "OUT",
+          "text": "host-auth-gateway authorize",
+          "offsetMs": -1120,
+          "payload": {
+            "pan": "4111111111111111",
+            "amount": "{amount}",
+            "attempt": 1
+          }
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.host.HostAuthClient",
+          "kind": "OUT_RESP",
+          "text": "host-auth-gateway authorize status=504 latencyMs=500 error=timeout",
+          "offsetMs": -615,
+          "level": "WARN"
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.host.HostAuthClient",
+          "kind": "OUT",
+          "text": "host-auth-gateway authorize",
+          "offsetMs": -605,
+          "payload": {
+            "pan": "4111111111111111",
+            "amount": "{amount}",
+            "attempt": 2
+          }
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.host.HostAuthClient",
+          "kind": "OUT_RESP",
+          "text": "host-auth-gateway authorize status=504 latencyMs=500 error=timeout",
+          "offsetMs": -100,
+          "level": "WARN"
+        },
+        {
+          "component": "withdrawal-p1",
+          "logger": "com.example.bank.withdrawal.api.WithdrawalController",
+          "kind": "RESP",
+          "text": "status=504 latencyMs=1178",
+          "offsetMs": 6,
+          "payload": {
+            "error": "UNABLE_TO_PROCESS"
+          },
+          "level": "WARN"
+        },
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.RequestLogFilter",
+          "kind": "RESP",
+          "text": "status=504 latencyMs=1190",
+          "offsetMs": 11,
+          "payload": {
+            "error": "UNABLE_TO_PROCESS"
+          },
+          "level": "WARN"
+        }
+      ]
     },
     {
       "component": "withdrawal-p1",
@@ -51,7 +187,59 @@
         "at com.example.bank.deposit.validation.DepositValidator.validate(DepositValidator.java:35)",
         "at com.example.bank.deposit.DepositService.deposit(DepositService.java:29)"
       ],
-      "count": 22
+      "count": 22,
+      "trace": [
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.RequestLogFilter",
+          "kind": "IN",
+          "text": "POST /v1/deposits",
+          "offsetMs": -40,
+          "payload": {
+            "amount": "{amount}",
+            "noteCount": "{int:1-40}",
+            "envelope": null,
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "deposit-p1",
+          "logger": "com.example.bank.deposit.api.DepositController",
+          "kind": "IN",
+          "text": "POST /v1/deposits",
+          "offsetMs": -31,
+          "payload": {
+            "amount": "{amount}",
+            "noteCount": "{int:1-40}",
+            "envelope": null,
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "deposit-p1",
+          "logger": "com.example.bank.deposit.api.DepositController",
+          "kind": "RESP",
+          "text": "status=500 latencyMs=33",
+          "offsetMs": 3,
+          "payload": {
+            "error": "INTERNAL_ERROR"
+          },
+          "level": "WARN"
+        },
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.RequestLogFilter",
+          "kind": "RESP",
+          "text": "status=500 latencyMs=47",
+          "offsetMs": 8,
+          "payload": {
+            "error": "INTERNAL_ERROR"
+          },
+          "level": "WARN"
+        }
+      ]
     },
     {
       "note": "Carries an account number, to show masking. The gateway in front logs the same request (same trace id)",
@@ -76,6 +264,73 @@
           "level": "WARN",
           "message": "upstream deposit-p1 answered status=502, passing the Exception to the caller"
         }
+      ],
+      "trace": [
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.RequestLogFilter",
+          "kind": "IN",
+          "text": "POST /v1/deposits",
+          "offsetMs": -360,
+          "payload": {
+            "amount": "{amount}",
+            "noteCount": "{int:1-40}",
+            "envelope": {
+              "currency": "USD"
+            },
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "deposit-p1",
+          "logger": "com.example.bank.deposit.api.DepositController",
+          "kind": "IN",
+          "text": "POST /v1/deposits",
+          "offsetMs": -352,
+          "payload": {
+            "amount": "{amount}",
+            "noteCount": "{int:1-40}",
+            "envelope": {
+              "currency": "USD"
+            },
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "deposit-p1",
+          "logger": "com.example.bank.deposit.ledger.LedgerClient",
+          "kind": "OUT",
+          "text": "ledger-p1 postCredit",
+          "offsetMs": -340,
+          "payload": {
+            "accountNumber": "9876543210",
+            "amount": "{amount}"
+          }
+        },
+        {
+          "component": "deposit-p1",
+          "logger": "com.example.bank.deposit.ledger.LedgerClient",
+          "kind": "OUT_RESP",
+          "text": "ledger-p1 postCredit status=503 latencyMs=310 error=unavailable",
+          "offsetMs": -25,
+          "payload": {
+            "message": "ledger is in maintenance"
+          },
+          "level": "WARN"
+        },
+        {
+          "component": "deposit-p1",
+          "logger": "com.example.bank.deposit.api.DepositController",
+          "kind": "RESP",
+          "text": "status=502 latencyMs=356",
+          "offsetMs": 4,
+          "payload": {
+            "error": "UPSTREAM_UNAVAILABLE"
+          },
+          "level": "WARN"
+        }
       ]
     },
     {
@@ -93,7 +348,71 @@
       ],
       "count": 17,
       "fromHoursAgo": 16.8,
-      "toHoursAgo": 15.84
+      "toHoursAgo": 15.84,
+      "trace": [
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.RequestLogFilter",
+          "kind": "IN",
+          "text": "GET /v1/accounts/balance",
+          "offsetMs": -2040,
+          "payload": {
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "balance-p1",
+          "logger": "com.example.bank.inquiry.api.BalanceController",
+          "kind": "IN",
+          "text": "GET /v1/accounts/balance",
+          "offsetMs": -2032,
+          "payload": {
+            "accountNumber": "9876543210",
+            "bankId": "{bankId}"
+          }
+        },
+        {
+          "component": "balance-p1",
+          "logger": "com.example.bank.inquiry.CoreBankingClient",
+          "kind": "OUT",
+          "text": "core-banking balance",
+          "offsetMs": -2020,
+          "payload": {
+            "accountNumber": "9876543210"
+          }
+        },
+        {
+          "component": "balance-p1",
+          "logger": "com.example.bank.inquiry.CoreBankingClient",
+          "kind": "OUT_RESP",
+          "text": "core-banking balance status=504 latencyMs=2000 error=timeout",
+          "offsetMs": -15,
+          "level": "WARN"
+        },
+        {
+          "component": "balance-p1",
+          "logger": "com.example.bank.inquiry.api.BalanceController",
+          "kind": "RESP",
+          "text": "status=504 latencyMs=2036",
+          "offsetMs": 4,
+          "payload": {
+            "error": "UNABLE_TO_PROCESS"
+          },
+          "level": "WARN"
+        },
+        {
+          "component": "gateway-p1",
+          "logger": "com.example.bank.gateway.RequestLogFilter",
+          "kind": "RESP",
+          "text": "status=504 latencyMs=2047",
+          "offsetMs": 9,
+          "payload": {
+            "error": "UNABLE_TO_PROCESS"
+          },
+          "level": "WARN"
+        }
+      ]
     },
     {
       "note": "A fallback that logs at INFO: the word Exception, but no exception class and no stack trace",

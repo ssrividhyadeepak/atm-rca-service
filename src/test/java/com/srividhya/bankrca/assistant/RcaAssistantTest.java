@@ -71,8 +71,8 @@ class RcaAssistantTest {
                 .contains("NO_MATCH");
         assertThat(seen.get(1)).isInstanceOf(UserMessage.class);
         assertThat(seen.get(1).getText()).isEqualTo("Why was card ************1111 refused?");
-        assertThat(offered).containsExactly("draftIncident", "getFailureSummary", "getFinding", "lookupRunbook",
-                "searchHistoricalRca");
+        assertThat(offered).containsExactly("draftIncident", "getFailureSummary", "getFinding", "gitFindSuspects", "lookupRunbook",
+                "searchHistoricalRca", "serviceNowRecentChanges", "splunkFindFailures", "splunkTraceRequest");
     }
 
     @Test

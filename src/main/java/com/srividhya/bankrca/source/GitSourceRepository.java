@@ -6,21 +6,27 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.blame.BlameResult;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.filter.CommitTimeRevFilter;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathSuffixFilter;
+import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -201,6 +207,41 @@ public class GitSourceRepository implements SourceRepository {
                     lines.get(frame.line() - 1).strip(), snippet.toString(), blamed == null ? null : info(blamed),
                     recent.isEmpty() ? null : recent.get(0), recent);
         }
+    }
+
+    @Override
+    public List<CommitChange> commits(String component, Instant from, Instant to, int limit) {
+        List<CommitChange> found = new ArrayList<>();
+        for (Source s : candidates(component)) {
+            try {
+                fetchIfStale(s);
+                try (Git git = Git.open(s.dir.toFile()); DiffFormatter diff = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+                    Repository repo = git.getRepository();
+                    ObjectId head = repo.resolve(s.ref + "^{commit}");
+                    if (head == null) {
+                        continue;
+                    }
+                    diff.setRepository(repo);
+                    // By committer time: when the commit reached the branch
+                    for (RevCommit c : git.log().add(head).setRevFilter(CommitTimeRevFilter.between(from, to))
+                            .setMaxCount(limit).call()) {
+                        // Against the first parent: for a merge, what the merge brought in
+                        List<DiffEntry> entries = diff.scan(c.getParentCount() == 0 ? null : c.getParent(0).getTree(),
+                                c.getTree());
+                        List<String> files = entries.stream().limit(CommitChange.MAX_FILES)
+                                .map(e -> e.getChangeType() == DiffEntry.ChangeType.DELETE ? e.getOldPath() : e.getNewPath())
+                                .toList();
+                        found.add(new CommitChange(s.name, s.ref, c.abbreviate(10).name(),
+                                c.getCommitterIdent().getWhenAsInstant().toString(), c.getAuthorIdent().getName(),
+                                c.getShortMessage(), files, entries.size()));
+                    }
+                }
+            } catch (IOException | GitAPIException | RuntimeException e) {
+                log.warn("Reading the commits of repository {} failed: {}", s.name, e.toString());
+            }
+        }
+        found.sort(Comparator.comparing(CommitChange::time).reversed());
+        return found.size() > limit ? List.copyOf(found.subList(0, limit)) : found;
     }
 
     /** Repositories configured for the component first, then those open to any component. */

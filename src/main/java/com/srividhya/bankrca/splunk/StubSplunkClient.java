@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,6 +29,7 @@ import org.springframework.stereotype.Component;
 import com.srividhya.bankrca.config.RcaProperties;
 import com.srividhya.bankrca.splunk.StubData.FollowOn;
 import com.srividhya.bankrca.splunk.StubData.StubFailure;
+import com.srividhya.bankrca.splunk.StubData.TraceStep;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DeserializationFeature;
@@ -68,18 +70,26 @@ public class StubSplunkClient implements SplunkClient {
 
     @Override
     public List<Map<String, Object>> search(String name, Instant earliest, Instant latest, Map<String, Object> args) {
-        if (!FAILED_TRANSACTIONS.equals(name)) {
+        if (!FAILED_TRANSACTIONS.equals(name) && !TRACE_EVENTS.equals(name)) {
             throw new IllegalArgumentException("Unknown search: " + name);
         }
         StubData data = load();
         if (!data.namespace().equals(args.get("namespace"))) {
             return List.of();
         }
-        List<Pattern> components = ((List<?>) args.get("components")).stream()
-                .map(p -> Pattern.compile(Pattern.quote(String.valueOf(p)).replace("*", "\\E.*\\Q"))).toList();
         int limit = Integer.parseInt(String.valueOf(args.get("limit")));
-        return generate(data).stream()
-                .filter(e -> components.stream().anyMatch(p -> p.matcher(e.component).matches()))
+        Generated day = generate(data);
+        List<Event> matched;
+        if (TRACE_EVENTS.equals(name)) {
+            // Everything logged for one request, by any component
+            matched = day.traces().getOrDefault(String.valueOf(args.get("traceId")), List.of());
+        } else {
+            List<Pattern> components = ((List<?>) args.get("components")).stream()
+                    .map(p -> Pattern.compile(Pattern.quote(String.valueOf(p)).replace("*", "\\E.*\\Q"))).toList();
+            matched = day.failures().stream()
+                    .filter(e -> components.stream().anyMatch(p -> p.matcher(e.component).matches())).toList();
+        }
+        return matched.stream()
                 .filter(e -> !e.time.isBefore(earliest) && e.time.isBefore(latest))
                 .limit(limit)
                 .map(e -> {
@@ -134,6 +144,11 @@ public class StubSplunkClient implements SplunkClient {
                 require(!Boolean.TRUE.equals(f.uiEvent()), where,
                         entry + "'alsoLoggedBy' cannot be used with 'uiEvent': UI events have no trace id to share");
             }
+            for (TraceStep step : f.trace() == null ? List.<TraceStep>of() : f.trace()) {
+                require(hasText(step.component()) && hasText(step.logger()) && hasText(step.text())
+                        && List.of("IN", "OUT", "OUT_RESP", "RESP").contains(step.kind()), where,
+                        entry + "each 'trace' step needs 'component', 'logger', 'text' and a 'kind' of IN, OUT, OUT_RESP or RESP");
+            }
             total += (long) f.count() * (1 + followOns.size());
         }
         require(total <= MAX_EVENTS, where, "the counts add up to " + total + "; the most is " + MAX_EVENTS);
@@ -162,11 +177,19 @@ public class StubSplunkClient implements SplunkClient {
     private record Event(Instant time, String component, String raw) {
     }
 
+    /**
+     * @param failures the events that mention an exception: what the failure search returns
+     * @param traces trace id to every event of that request, in time order
+     */
+    private record Generated(List<Event> failures, Map<String, List<Event>> traces) {
+    }
+
     /** The 24 hours ending at the current minute, oldest first. */
-    private List<Event> generate(StubData data) {
+    private Generated generate(StubData data) {
         Random rnd = new Random(SEED);
         Instant end = clock.instant().truncatedTo(ChronoUnit.MINUTES);
         List<Event> events = new ArrayList<>();
+        Map<String, List<Event>> traces = new HashMap<>();
         for (StubFailure f : data.failures()) {
             long fromMs = hoursToMillis(f.fromHoursAgo() == null ? 24 : f.fromHoursAgo());
             long toMs = Math.max(1000, hoursToMillis(f.toHoursAgo() == null ? 0 : f.toHoursAgo()));
@@ -174,27 +197,53 @@ public class StubSplunkClient implements SplunkClient {
                 Instant time = end.minusMillis(fromMs - (long) (rnd.nextDouble() * (fromMs - toMs)));
                 String bankId = data.bankIds().get(rnd.nextInt(data.bankIds().size()));
                 String trace = hex(rnd, 4) + "-" + hex(rnd, 2) + "-" + hex(rnd, 2) + "-" + hex(rnd, 2) + "-" + hex(rnd, 6);
+                String prefix = "--" + bankId + "-" + trace + "- ";
                 String text = fill(f.message(), rnd);
-                String line = Boolean.TRUE.equals(f.uiEvent())
+                boolean ui = Boolean.TRUE.equals(f.uiEvent());
+                String line = ui
                         ? "UI MOD BANK ID:" + bankId + " Timestamp: " + time + " CustomerTrackingSessionId:"
                                 + hex(rnd, 16).toUpperCase() + " " + text
-                        : "--" + bankId + "-" + trace + "- "
-                                + (hasText(f.exception()) ? "attached exception: " + f.exception() + ": " + text : text)
+                        : prefix + (hasText(f.exception()) ? "attached exception: " + f.exception() + ": " + text : text)
                                 + stack(f.stackTrace());
-                events.add(new Event(time, f.component(), raw(data, f.component(), f.logger(), f.level(), line, time, rnd)));
+                List<Event> request = new ArrayList<>();
+                Event failure = new Event(time, f.component(), raw(data, f.component(), f.logger(), f.level(), line, time, rnd));
+                events.add(failure);
+                request.add(failure);
                 if (f.alsoLoggedBy() != null) {
                     // The same request, seen a moment later by the next component up the call path
                     Instant later = time;
                     for (FollowOn also : f.alsoLoggedBy()) {
                         later = later.plusMillis(5 + rnd.nextInt(40));
-                        events.add(new Event(later, also.component(), raw(data, also.component(), also.logger(),
-                                also.level(), "--" + bankId + "-" + trace + "- " + fill(also.message(), rnd), later, rnd)));
+                        Event followOn = new Event(later, also.component(), raw(data, also.component(), also.logger(),
+                                also.level(), prefix + fill(also.message(), rnd), later, rnd));
+                        events.add(followOn);
+                        request.add(followOn);
                     }
+                }
+                if (!ui) {
+                    if (f.trace() != null) {
+                        // Its own random source, so adding trace lines to the file does not change
+                        // the failure events generated after it
+                        Random own = new Random(trace.hashCode());
+                        // One amount for the whole request: the same value must be seen at every hop
+                        String amount = String.valueOf(20 + own.nextInt(49) * 20);
+                        for (TraceStep step : f.trace()) {
+                            Instant at = time.plusMillis(step.offsetMs() == null ? 0 : step.offsetMs());
+                            String payload = step.payload() == null || step.payload().isNull() ? ""
+                                    : " payload=" + fill(json.writeValueAsString(step.payload()).replace("{bankId}", bankId)
+                                            .replace("{amount}", amount), own);
+                            request.add(new Event(at, step.component(), raw(data, step.component(), step.logger(),
+                                    hasText(step.level()) ? step.level() : "INFO",
+                                    prefix + step.kind() + " " + fill(step.text(), own) + payload, at, own)));
+                        }
+                    }
+                    request.sort(Comparator.comparing(Event::time));
+                    traces.put(trace, request);
                 }
             }
         }
         events.sort(Comparator.comparing(Event::time));
-        return events;
+        return new Generated(events, traces);
     }
 
     private static long hoursToMillis(double hours) {

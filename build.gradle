@@ -65,6 +65,7 @@ tasks.named('test') {
 tasks.named('processResources') {
     from('config/stub-failures.json')
     from('config/stub-source.json')
+    from('config/stub-changes.json')
 }
 
 tasks.named('bootJar') {

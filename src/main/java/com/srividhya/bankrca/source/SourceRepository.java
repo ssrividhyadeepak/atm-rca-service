@@ -1,5 +1,8 @@
 package com.srividhya.bankrca.source;
 
+import java.time.Instant;
+import java.util.List;
+
 import com.srividhya.bankrca.rca.StackTraces.Frame;
 
 /**
@@ -17,4 +20,13 @@ public interface SourceRepository {
      * @return never null: when nothing is found, a location with found=false and a note saying why
      */
     SourceLocation locate(String component, Frame frame);
+
+    /**
+     * Commits that reached the deployed ref in the window, newest first, with the files each changed.
+     *
+     * @param component used to pick the repositories, as in locate
+     */
+    default List<CommitChange> commits(String component, Instant from, Instant to, int limit) {
+        return List.of();
+    }
 }
