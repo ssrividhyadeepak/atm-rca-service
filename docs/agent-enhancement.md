@@ -1,3 +1,4 @@
+
 # RCA agent enhancement (branch `feature/rca-agent-mcp`)
 
 Goal: move from a service that analyses failures by fixed rules to an agent an LLM drives
